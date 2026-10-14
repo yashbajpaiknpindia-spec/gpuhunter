@@ -278,7 +278,7 @@ class KryptexPoolClient:
         coin_info = results.get("coin_info")
         price_chart = results.get("price_chart")
         hr_keys = ("hashrate", "hash_rate", "current_hashrate", "reported_hashrate", "average_hashrate", "speed")
-        bal_keys = ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature", "confirmed", "unconfirmed")
+        bal_keys = ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature")
         hashrate = _first_number(chart, hr_keys)
         if hashrate is None:
             hashrate = _first_number(workers, hr_keys)
