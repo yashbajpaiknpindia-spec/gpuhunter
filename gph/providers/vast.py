@@ -151,7 +151,7 @@ class VastClient:
             pass
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any] | list[Any]:
-        url = f"{self.base_url}{path}"
+        url = path if path.startswith(("https://", "http://")) else f"{self.base_url}{path}"
         call_started = time.monotonic()
         self.last_call = {"path": path, "status": None, "seconds": None, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
 
@@ -510,29 +510,37 @@ class VastClient:
         return self.search_offers_with_diagnostics(limit, min_reliability)["offers"]
 
     def list_instances(self) -> list[dict[str, Any]]:
-        """List instances; fail closed if the response envelope is not understood.
+        """List the account fleet through Vast's v1 endpoint.
 
-        An unknown/malformed JSON response must never be interpreted as an empty fleet:
-        the supervisor uses genuine absence from this list to confirm that a destroy completed.
+        Vast has deprecated the v0 account-wide instance-list route. Never turn an
+        unrecognized or incomplete response into an empty fleet: doing so can make a
+        running, billable instance invisible to the monitor.
         """
-        data = self._request("GET", "/instances/")
+        url = "https://cloud.vast.ai/api/v1/instances/?owner=me"
+        data = self._request("GET", url)
         if isinstance(data, list):
             rows = data
         elif isinstance(data, dict):
             if data.get("success") is False or data.get("error"):
                 raise VastAPIError(f"Vast instance-list request was rejected: {str(data.get('error') or data)[:240]}")
             rows = None
-            for key in ("instances", "results"):
+            for key in ("instances", "results", "data"):
                 if isinstance(data.get(key), list):
                     rows = data[key]
                     break
             if rows is None:
                 keys = ", ".join(sorted(str(k) for k in data.keys())[:20]) or "no fields"
-                raise VastAPIError(f"Vast returned an unexpected instance-list response (expected a list or instances/results array; keys: {keys})")
+                raise VastAPIError(f"Vast v1 returned an unexpected instance-list response (expected instances/results/data array; keys: {keys})")
+            pagination = data.get("pagination")
+            has_more = bool(data.get("has_more") or data.get("hasMore") or data.get("next_cursor"))
+            if isinstance(pagination, dict):
+                has_more = has_more or bool(pagination.get("has_more") or pagination.get("next_cursor") or pagination.get("next"))
+            if has_more:
+                raise VastAPIError("Vast v1 instance list is paginated; refusing to treat the first page as the complete fleet")
         else:
-            raise VastAPIError("Vast returned an unexpected instance-list response type")
+            raise VastAPIError("Vast v1 returned an unexpected instance-list response type")
         if any(not isinstance(row, dict) for row in rows):
-            raise VastAPIError("Vast instance-list response contains non-object entries; refusing to infer fleet state")
+            raise VastAPIError("Vast v1 instance-list response contains non-object entries; refusing to infer fleet state")
         return rows
 
     def get_current_user(self) -> dict[str, Any]:
