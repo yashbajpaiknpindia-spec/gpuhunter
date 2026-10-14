@@ -335,3 +335,11 @@ This release serves bundled CSS/JavaScript from the absolute application path wi
 The manual Scan Market action uses the configured Kryptex coin (defaults to PRL/Pearl) and does not require GPU-model or hourly-price filters. Before querying Vast, it loads the current WhatToMine GPU/coin catalogue and calculates conservative revenue and maximum affordable all-in hourly rental ceilings for supported GPU benchmarks. It then sends targeted Vast searches for the best positive-ceiling GPU models, alongside the quota-paced broad audit used to discover new models. Every returned offer is recalculated locally; stale/unsupported estimates and offers that fail host, payment, wallet, profile, spend, or monitoring gates remain ineligible for live rental.
 
 The Overview shows the automatic GPU affordability catalogue and, when fresh and matching the configured coin, the Kryptex public pool coin-price sample as a separate reference (not GPU revenue). The dashboard does not accept manual GPU/price search filters. Live auto-rental remains blocked until the explicit Vast mining-credit eligibility, payment-source, wallet, miner-profile, SSH monitoring, and pool telemetry gates pass; setting the search strategy does not bypass those checks.
+
+
+## Scan-to-rent automation (v0.7.15)
+
+- When a user starts **Scan Market**, the UI now waits through both the market scan and follow-on rental evaluation whenever live mode and auto-rent are enabled. The same qualified-candidate evaluator is used as in recurring scans.
+- Auto-rent is enabled by default for the requested autonomous workflow, but it does **not** bypass live-mode, eligible-credit, wallet, enabled miner profile, SSH, fresh pool-revenue telemetry, current offer revalidation, available balance, daily spend, positive-net-profit, or revenue/cost-ratio gates. If any gate is missing, no paid rental is submitted and the UI reports the blocker.
+- If no fresh supported Pearl/GPU revenue benchmark passes conservative fees, reserves, and net-profit gates, the result is scan-only; a coin-price reference alone is never mining revenue.
+- Existing instance monitoring continues to compare conservative pool/benchmark revenue against current all-in rent and destroy managed instances when profitability or monitoring safety gates fail.
