@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPU Profit Hunter v0.7.12</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.12') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.13') }}">
 </head>
 <body>
   <div class="shell">
@@ -128,6 +128,19 @@
 
       <section id="opportunitiesSection" class="page-section hidden">
         <div class="section-heading scanner-heading"><div><div class="section-kicker">VAST OFFERS × COIN REVENUE</div><h2>Market scanner</h2><p>All models and coins surfaced by connected providers. Estimates are haircut before applying rent costs. USD is the accounting base; ₹ figures are display-only conversions using the timestamped FX quote.</p></div><div class="scanner-controls"><select id="decisionFilter"><option value="all">All candidates</option><option value="economics">Economically positive</option><option value="qualified">Live-qualified only</option><option value="rejected">Rejected / uncertain</option></select><input id="searchFilter" placeholder="Filter GPU, coin, algorithm…" aria-label="Filter offers"></div></div>
+        <div class="panel smart-scan-panel">
+          <div class="panel-head"><div><h3>Search requirements</h3><p>Set your budget and target before scanning. GPU and price limits are sent to Vast's search query; coin and minimum-net requirements filter the calculated profitability rows after provider data returns.</p></div><span class="pill pill-muted">SCAN ONLY</span></div>
+          <div class="smart-scan-controls">
+            <label>GPU model <input id="scanGpuModel" type="text" placeholder="Any GPU, or e.g. RTX 4090" maxlength="100"></label>
+            <label>Coin / ticker <input id="scanCoin" type="text" placeholder="Any supported coin, e.g. PRL" maxlength="24"></label>
+            <label>Max all-in rental USD/hour <input id="scanMaxHourly" type="number" min="0" step="0.01" placeholder="Use configured cap"></label>
+            <label>Minimum estimated net USD/day <input id="scanMinNet" type="number" min="-1000" step="0.10" value="0"></label>
+            <label>Minimum reliability % <input id="scanMinReliability" type="number" min="0" max="100" step="0.1" value="99"></label>
+          </div>
+          <div class="smart-scan-actions"><button class="btn btn-secondary" id="resetScanFilters" type="button">Reset requirements</button><span>These settings guide discovery and table filtering only. They never override safety or live-rental gates.</span></div>
+        </div>
+        <div class="section-heading diagnostics-heading"><div><div class="section-kicker">PROFITABILITY FIRST</div><h3>GPU affordability catalogue</h3><p>GPU models with fresh revenue benchmarks and the maximum hourly rental rate allowed by the current profit rules. The first scan builds this catalogue; later scans use it to target matching Vast offers.</p></div></div>
+        <div class="table-wrap affordability-wrap"><table class="offer-diagnostic-table"><thead><tr><th>GPU model</th><th>Best coin</th><th>Max affordable all-in USD/hour</th><th>Estimated net/day</th><th>Benchmark source updated</th></tr></thead><tbody id="affordabilityTable"><tr><td colspan="5" class="empty-cell">Run the first scan to build the affordability catalogue from current provider benchmarks.</td></tr></tbody></table></div>
         <div class="inline-warning"><span>ⓘ</span><div><b>Never treat a benchmark as guaranteed revenue.</b> Provider data can be stale, market rewards can shift, and pool-reported earnings may lag. The loss guard requires a compatible profile and live monitoring.</div></div>
         <div id="scanDiagnostics" class="scan-diagnostics" aria-live="polite"><div class="scan-diagnostics-head"><span class="scan-orb idle"></span><div><b>Market scan status</b><small>Waiting for the latest server state…</small></div></div></div>
         <div class="section-heading diagnostics-heading"><div><div class="section-kicker">OFFER-LEVEL AUDIT</div><h3>Every returned offer and why it passed or failed</h3><p>Includes benchmark mismatches, missing provider fields, reliability failures, and offers with no supported coin calculations.</p></div><span id="offerReviewCount" class="pill pill-muted">0 offers reviewed</span></div>
@@ -165,6 +178,6 @@ KRYPTEX_COIN=prl</code><span>Render can prompt for these values during Blueprint
     </main>
   </div>
   <div id="confirmModal" class="modal hidden"><div class="modal-card"><div class="modal-mark">!</div><h3 id="modalTitle">Confirm action</h3><p id="modalText">This action affects a paid cloud resource.</p><div class="modal-actions"><button class="btn btn-secondary" id="modalCancel">Cancel</button><button class="btn btn-danger" id="modalConfirm">Confirm</button></div></div></div>
-  <script src="{{ url_for('static', filename='app.js', v='0.7.12') }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v='0.7.13') }}"></script>
 </body>
 </html>
