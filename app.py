@@ -348,6 +348,13 @@ def index():
     return render_template("index.html", current_username=session.get("gph_username"))
 
 
+@app.get("/favicon.ico")
+def favicon():
+    # Browsers request this path automatically even when the dashboard has no custom icon.
+    # Return an empty successful response instead of polluting service logs with a 404.
+    return "", 204
+
+
 @app.get("/api/health")
 def health():
     asset_sizes = {}
@@ -525,7 +532,13 @@ def state():
         # Do not try to write the error back to the failing database. Render logs are
         # the source of truth for this incident; a last-known UI snapshot is explicitly
         # tagged stale and live actions still re-read/revalidate their required state.
-        app.logger.exception("Dashboard snapshot read failed (database/API state unavailable)")
+        if isinstance(exc, RuntimeError) and "Dashboard snapshot refresh is still running" in str(exc):
+            # Expected single-flight contention during a cold cache refresh: the safe
+            # degraded response below is deliberate, so do not emit an ERROR traceback
+            # for every concurrent browser poll.
+            app.logger.warning("Dashboard refresh busy; returning degraded fallback")
+        else:
+            app.logger.exception("Dashboard snapshot read failed (database/API state unavailable)")
         with _STATE_CACHE_LOCK:
             stale = copy.deepcopy(_STATE_CACHE) if _STATE_CACHE is not None else None
         if stale is not None:
