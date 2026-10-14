@@ -146,11 +146,15 @@ function renderOfferDiagnostics(){
     return `<tr><td><div class="gpu-cell">${esc(x.gpu_name||'Unknown GPU')}</div><div class="sub-cell">Offer #${esc(x.offer_id)} · ${esc(x.region||'Unknown region')} · ${esc(x.search_stage||'unknown')} query</div></td><td><div class="money">${currency(x.total_hourly_usd,4)}/h</div><div class="sub-cell">${esc(inrLabel(x.total_hourly_usd,4))}/h</div></td><td>${number(Number(x.reliability||0)*100,1)}%</td><td><span class="scan-flag ${x.verified===true?'good':x.verified===false?'bad':'unknown'}">V ${esc(verified)}</span> <span class="scan-flag ${x.rentable===true?'good':x.rentable===false?'bad':'unknown'}">R ${esc(rentable)}</span></td><td>${x.benchmark_matched?`<span class="pill pill-good">MATCHED</span><div class="sub-cell">${esc(x.benchmark_gpu_name||'GPU benchmark')}</div>`:`<span class="pill pill-bad">NO MATCH</span><div class="sub-cell">No calculation</div>`}</td><td><div class="money ${Number(x.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${x.best_expected_net_day_usd===null||x.best_expected_net_day_usd===undefined?'—':currency(x.best_expected_net_day_usd)}</div><div class="sub-cell">best supported coin/algorithm</div></td><td><span class="pill ${tone}">${esc(state)}</span><div class="diagnostic-reasons">${esc(reasons)}</div><div class="sub-cell">${Number(x.coin_pairs_evaluated||0)} pairs · ${Number(x.economically_positive_pairs||0)} economics-positive</div></td></tr>`;
   }).join('');
 }
-function renderAffordabilityCatalogue(catalog){
+function renderAffordabilityCatalogue(catalog, kryptex){
   const table=$('affordabilityTable'); if(!table)return;
   const models=Array.isArray(catalog?.models)?catalog.models:[];
-  if(!models.length){table.innerHTML='<tr><td colspan="5" class="empty-cell">No fresh GPU affordability models yet. Run Scan market to build the catalogue; stale or unpriced models are not used to target rentals.</td></tr>';return;}
-  table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}</td></tr>`).join('');
+  const poolCoin=String(kryptex?.coin||'').toUpperCase();
+  const poolPrice=Number(kryptex?.coin_price_sample);
+  const poolPriceFresh=Boolean(kryptex?.coin_price_available&&poolCoin===String(catalog?.coin_tag||'PRL').toUpperCase()&&Number.isFinite(poolPrice)&&poolPrice>0);
+  const poolPriceCell=poolPriceFresh?`${currency(poolPrice,8)} <div class="sub-cell">${esc(kryptex.updated_at||'timestamp unavailable')} · reference only</div>`:'Unavailable / stale';
+  if(!models.length){table.innerHTML='<tr><td colspan="6" class="empty-cell">No fresh positive-affordability models. If WhatToMine has no current PRL benchmark, GPU Hunter will not invent revenue or rent a GPU.</td></tr>';return;}
+  table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${poolPriceCell}</td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}<div class="sub-cell">${esc(m.source||catalog.source||'Benchmark source')}</div></td></tr>`).join('');
 }
 function renderOpportunities(){
   if(!appState) return;
@@ -162,7 +166,7 @@ function renderOpportunities(){
     if(filter==='rejected'&&x.qualified)return false;
      const text=`${x.gpu_name} ${x.coin_tag} ${x.coin_name} ${x.algorithm} ${x.offer_id} ${(x.reasons||[]).join(' ')}`.toLowerCase(); return !query||text.includes(query);
   });
-  renderAffordabilityCatalogue(appState.gpu_affordability_catalog||{});
+  renderAffordabilityCatalogue(appState.gpu_affordability_catalog||{}, appState.kryptex||{});
   const cat=appState.gpu_affordability_catalog||{}; const modelCount=Array.isArray(cat.models)?cat.models.length:0;
   const status=$('smartScanStatus'); if(status)status.textContent=modelCount? `Auto-estimated ${modelCount} GPU models for ${cat.coin_tag||'PRL'} from ${cat.source||'provider benchmarks'} (updated ${cat.updated_at||'timestamp unavailable'}). Targeted Vast searches use only positive affordability ceilings; offers are revalidated before any paid action.` : 'No fresh positive-affordability catalogue yet. The first scan must load current WhatToMine GPU/coin data; if PRL has no supported calculation, the system will report that instead of guessing revenue.';
   let empty='No coin-level rows match these filters. Offer-level audit below still shows every returned Vast offer and its reason for exclusion.';
