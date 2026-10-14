@@ -173,14 +173,35 @@ function renderInstances(){
   $('instanceTable').innerHTML=rows.length?rows.map(x=>{
     const managed=x.managed_by_gph;
     const status=(x.status||'unknown').toLowerCase(); const statusPill=['running','active'].includes(status)?pill('pill-good',status.toUpperCase()):pill('pill-warn',status.toUpperCase());
-    const action=managed?`<button class="btn btn-danger destroy-btn" data-id="${Number(x.instance_id)}">Destroy</button>`:`<span class="sub-cell">External / not managed</span>`;
+    const monitorProfiles=(appState?.monitor_profiles||[]).filter(p=>p.pool_metrics_ready);
+    const profileControl=monitorProfiles.length?`<div class="manual-monitor-controls"><select class="adopt-profile-select" data-id="${Number(x.instance_id)}" aria-label="Monitoring profile for instance ${Number(x.instance_id)}">${monitorProfiles.map(p=>`<option value="${esc(p.id)}">${esc(p.label)} · ${esc((p.coin_tags||[]).join(","))} · ${esc((p.algorithms||[]).join(","))}</option>`).join("")}</select><button class="btn btn-secondary adopt-monitor-btn" data-id="${Number(x.instance_id)}" ${["running","active"].includes(status)?"":"disabled"}>Monitor + auto-stop</button></div>`:'<span class="sub-cell">Add an enabled profile with fresh pool revenue + timestamp paths to data/mining_profiles.json.</span>';
+    const action=managed?`<button class="btn btn-danger destroy-btn" data-id="${Number(x.instance_id)}">Destroy</button>`:(["running","active"].includes(status)?profileControl:'<span class="sub-cell">Start this instance manually in Vast first.</span>');
     const hr=Number(x.observed_hashrate_hs||0); const hrText=hr>=1e12?number(hr/1e12,2)+' TH/s':hr>=1e9?number(hr/1e9,2)+' GH/s':hr>0?number(hr,0)+' H/s':'—';
     const poolRate = x.pool_revenue_24h_usd;
     const poolStatus = poolRate!==null && poolRate!==undefined ? 'Pool-reported current 24h run-rate' : (x.pool_metrics_error ? 'Pool telemetry error' : 'Pool run-rate not connected');
     const poolSub = x.pool_metrics_source ? esc(x.pool_metrics_source) : (x.pool_metrics_error ? esc(x.pool_metrics_error) : 'Not configured');
     return `<tr><td><div class="gpu-cell">${esc(x.gpu_name)}</div><div class="sub-cell">#${esc(x.instance_id)}${x.coin_tag?' · '+esc(x.coin_tag):''}</div>${x.destroy_reason?`<div class="sub-cell negative">${status==='destroy_requested'?'Termination requested':'Stop reason'}: ${esc(x.destroy_reason)}</div>`:''}</td><td>${statusPill}</td><td><div class="money">${currency(x.hourly_cost_usd,4)}/h</div><div class="sub-cell">${currency(Number(x.hourly_cost_usd||0)*24)}/day</div><div class="sub-cell fx-sub">${esc(inrLabel(x.hourly_cost_usd,4))}/h · ${esc(inrLabel(Number(x.hourly_cost_usd||0)*24))}/day</div></td><td><b>${hrText}</b></td><td>${x.gpu_temp?number(x.gpu_temp,0)+'°C':'—'} / ${x.gpu_util?number(x.gpu_util,0)+'%':'—'}</td><td>${x.accepted_share_lines??0}</td><td><div class="money">${currency(x.conservative_gross_day_usd)}</div><div class="sub-cell">Conservative model forecast; not payout</div><div class="sub-cell fx-sub">${esc(inrLabel(x.conservative_gross_day_usd))}/day forecast</div>${poolRate!==null&&poolRate!==undefined?`<div class="sub-cell">${esc(poolStatus)}: ${currency(poolRate)}/day</div><div class="sub-cell">${poolSub} · ${esc(x.pool_metrics_updated_at||'timestamp unavailable')}</div><div class="sub-cell fx-sub">${esc(inrLabel(poolRate))}/day pool run-rate</div>`:`<div class="sub-cell">Pool-reported 24h run-rate unavailable</div>${x.pool_metrics_error?`<div class="sub-cell">${esc(x.pool_metrics_error)}</div>`:''}`}</td><td><div class="money ${(Number(x.expected_net_day_usd||0)>=0)?'positive':'negative'}">${currency(x.expected_net_day_usd)}</div><div class="sub-cell">forecast; not paid revenue</div><div class="sub-cell fx-sub">${esc(inrLabel(x.expected_net_day_usd))}/day net estimate</div></td><td>${action}</td></tr>`;
   }).join(''):`<tr><td colspan="9" class="empty-cell">No active Vast instances. Scan or connect the Vast API to see resources.</td></tr>`;
-  document.querySelectorAll('.destroy-btn').forEach(b=>b.addEventListener('click',()=>showModal('Destroy this instance?','This permanently destroys the managed Vast instance and deletes its local disk. This stops future compute and storage charges, but cannot refund past charges.',()=>destroyInstance(Number(b.dataset.id),b))));
+  document.querySelectorAll('.destroy-btn').forEach(b=>b.addEventListener('click',()=>showModal('Destroy this instance?','This permanently destroys the selected monitored Vast instance and deletes its local disk. This stops future compute and storage charges, but cannot refund past charges.',()=>destroyInstance(Number(b.dataset.id),b))));
+  document.querySelectorAll('.adopt-monitor-btn').forEach(b=>b.addEventListener('click',()=>{
+    const id=Number(b.dataset.id);
+    const select=document.querySelector(`.adopt-profile-select[data-id="${id}"]`);
+    const profile=(appState?.monitor_profiles||[]).find(p=>p.id===select?.value);
+    if(!profile){setNotice('Choose a valid monitoring profile first.','error');return;}
+    const concreteTags=(profile.coin_tags||[]).filter(x=>x!=='*');
+    const concreteAlgos=(profile.algorithms||[]).filter(x=>x!=='*');
+    const coin=concreteTags.length===1?concreteTags[0]:window.prompt(`Coin tag for this instance (allowed: ${concreteTags.join(', ')||'enter actual tag'})`,concreteTags[0]||'');
+    if(!coin)return;
+    const algorithm=concreteAlgos.length===1?concreteAlgos[0]:window.prompt(`Algorithm for this instance (allowed: ${concreteAlgos.join(', ')||'enter actual algorithm'})`,concreteAlgos[0]||'');
+    if(!algorithm)return;
+    showModal('Enable monitoring + automatic stop?',`Instance #${id} was set up manually. GPU Profit Hunter will NOT start or alter the miner. It will monitor SSH miner telemetry and fresh pool revenue, and may permanently destroy this Vast instance and its disk if the conservative net forecast is below the configured threshold, shares/hashrate fail, telemetry goes stale, or a hardware safety limit trips. Continue?`,async()=>{
+      try{
+        const result=await api(`/api/monitor/adopt/${id}`,{method:'POST',body:JSON.stringify({confirm:true,profile_id:profile.id,coin_tag:coin,algorithm})});
+        setNotice(result.message||'Instance enrolled for monitoring.','success');
+        await refresh({keepNotice:true,throwOnError:true});
+      }catch(err){setNotice(err.message,'error');}
+    });
+  }));
   $('miniInstances').innerHTML=rows.length?rows.slice(0,5).map(x=>`<div class="mini-instance"><div><strong>${esc(x.gpu_name)} ${x.coin_tag?'· '+esc(x.coin_tag):''}</strong><small>Instance #${esc(x.instance_id)} · ${esc(x.status)}</small></div><div class="mini-right"><b>${currency(x.hourly_cost_usd,4)}/h</b><small>${x.managed_by_gph?'GPH monitored':'External instance'}</small></div></div>`).join(''):`<div class="empty-state">No connected Vast instances.</div>`;
   $('navInstanceCount').textContent=rows.length;
 }
@@ -188,11 +209,11 @@ function renderAutomation(a,blockers,summary={}){
   const input=$('targetInstances'); const desired=Number(a.target_active_instances??1); const cap=25;
   input.max=String(cap);
   if(document.activeElement!==input) input.value=String(Math.min(cap,Math.max(0,desired)));
-  $('autoRentEnabled').checked=Boolean(a.auto_rent_enabled); $('autoRentEnabled').disabled=!(a.live_mode&&!blockers.length);
-  $('deployTargetBtn').disabled=!(a.live_mode&&!blockers.length&&a.target_active_instances>0);
-  $('automationModeLabel').className=`pill ${a.auto_rent_enabled?'pill-warn':'pill-muted'}`;
-  $('automationModeLabel').textContent=a.auto_rent_enabled?'AUTO-DEPLOY ON':'SCAN ONLY';
-  $('automationHelp').textContent=blockers.length?`Auto-deploy blocked: ${blockers.slice(0,3).join(' · ')}${blockers.length>3?' …':''}`:`Target can be set from 0–${cap}. Automatic scans ${a.auto_scan_enabled?'ON':'OFF'} every ~${Math.max(1,Math.round((a.effective_scan_interval_seconds||a.scan_interval_seconds||60)/60))} min (paced to the daily Vast search quota). Qualified candidates are ranked by conservative net/day; spend and safety gates may keep the active count below your target.`;
+  $('autoRentEnabled').checked=false; $('autoRentEnabled').disabled=true;
+  $('deployTargetBtn').disabled=true;
+  $('automationModeLabel').className='pill pill-muted';
+  $('automationModeLabel').textContent='MANUAL MONITOR ONLY';
+  $('automationHelp').textContent='GPU Profit Hunter does not rent instances or launch miners. Scan results are informational. Set up the miner yourself in Vast, then enroll only the instance you want monitored; enrolled instances can be permanently destroyed by safety rules.';
   updateTargetPreview(a,summary);
 }
 function updateTargetPreview(a=appState?.automation||{},summary=appState?.summary||{}){
