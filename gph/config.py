@@ -106,7 +106,7 @@ class Config:
     vast_daily_row_budget: int = _int("VAST_DAILY_ROW_BUDGET", 20000)
     vast_row_reserve: int = _int("VAST_ROW_RESERVE", 1500)  # kept free for pre-rental revalidation
     vast_search_limit: int = max(10, min(500, _int("VAST_SEARCH_LIMIT", 100)))
-    vast_audit_limit: int = max(0, min(500, _int("VAST_AUDIT_LIMIT", 40)))  # 0 disables the broad audit query
+    vast_audit_limit: int = max(0, min(500, _int("VAST_AUDIT_LIMIT", 500)))  # broad hourly audit discovers more GPU models; quota-aware pacing remains in force
     vast_audit_interval_seconds: int = _int("VAST_AUDIT_INTERVAL_SECONDS", 3600)
     vast_search_order: str = os.getenv("VAST_SEARCH_ORDER", "dph_total").strip()  # "-field" = descending; "" = Vast default
     monitor_interval_seconds: int = _int("MONITOR_INTERVAL_SECONDS", 45)
