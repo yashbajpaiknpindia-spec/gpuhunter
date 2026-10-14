@@ -1,0 +1,1 @@
+"""GPU Profit Hunter package."""

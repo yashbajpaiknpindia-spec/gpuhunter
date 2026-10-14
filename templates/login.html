@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sign in · GPU Profit Hunter</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='login.css', v='0.7.10') }}">
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-story" aria-label="GPU Profit Hunter overview">
+      <div class="brand-lockup"><div class="brand-mark" aria-hidden="true">G</div><div><strong>GPU Profit Hunter</strong><span>RENTAL INTELLIGENCE</span></div></div>
+      <div class="story-copy">
+        <div class="overline"><span class="live-dot"></span> PRIVATE CONTROL CENTER</div>
+        <h1>Know the numbers.<br><em>Control the risk.</em></h1>
+        <p>Compare cloud GPU rental costs with conservative mining estimates, monitor live instances, and review every safety gate before spending.</p>
+      </div>
+      <div class="story-foot"><span>Profit estimates are not guarantees.</span><span>·</span><span>Live rentals remain guarded by server-side checks.</span></div>
+    </section>
+
+    <section class="login-main" aria-labelledby="login-title">
+      <form class="login-card" method="post" action="{{ url_for('login') }}" autocomplete="on">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <div class="mobile-brand"><div class="brand-mark" aria-hidden="true">G</div><strong>GPU Profit Hunter</strong></div>
+        <div class="card-kicker">ACCOUNT ACCESS</div>
+        <h2 id="login-title">Welcome back</h2>
+        <p class="intro">Sign in to open your GPU Profit Hunter workspace.</p>
+
+        {% if error %}
+          <div class="login-error" role="alert"><span class="error-icon" aria-hidden="true">!</span><div><strong>Couldn't sign you in</strong><p>{{ error }}</p></div></div>
+        {% endif %}
+        {% if expired %}
+          <div class="login-info" role="status">Your sign-in session expired. Please sign in again.</div>
+        {% elif logged_out %}
+          <div class="login-info" role="status">You have signed out safely.</div>
+        {% endif %}
+
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" value="{{ entered_username or login_username }}" placeholder="Enter your app username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+        <p class="field-help">Username for this deployment: <code>{{ login_username }}</code>. Change it with <code>APP_USER</code> in Render.</p>
+
+        <label for="password">Password</label>
+        <div class="password-wrap"><input id="password" name="password" type="password" placeholder="Enter your app password" autocomplete="current-password" required><button type="button" id="togglePassword" class="show-password" aria-controls="password" aria-pressed="false">Show</button></div>
+        <p class="field-help">Use the exact value of <code>APP_PASSWORD</code> in your Render service's Environment settings. It is case-sensitive.</p>
+
+        <button class="sign-in-btn" type="submit">Sign in <span aria-hidden="true">→</span></button>
+        <div class="credential-help"><div class="lock-icon" aria-hidden="true">▣</div><p><strong>Still can't log in?</strong><br>Open <b>Render → your web service → Environment</b>. Check <code>APP_USER</code> and reset <code>APP_PASSWORD</code> if needed, then save and redeploy. Never share either value in chat.</p></div>
+        <div class="secure-note"><span aria-hidden="true">●</span> Credentials are checked by the server, not stored in this page. Repeated failures trigger a temporary sign-in cooldown.</div>
+      </form>
+      <footer class="login-footer">GPU Profit Hunter <span>·</span> Private workspace</footer>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const input = document.getElementById('password');
+      const button = document.getElementById('togglePassword');
+      button.addEventListener('click', () => {
+        const reveal = input.type === 'password';
+        input.type = reveal ? 'text' : 'password';
+        button.textContent = reveal ? 'Hide' : 'Show';
+        button.setAttribute('aria-pressed', String(reveal));
+        input.focus();
+      });
+    })();
+  </script>
+</body>
+</html>

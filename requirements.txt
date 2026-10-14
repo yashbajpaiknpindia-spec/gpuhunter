@@ -1,0 +1,7 @@
+Flask>=3.0,<4
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+paramiko>=3.4,<5
+gunicorn>=22.0,<24
+psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPU Profit Hunter v0.7.10</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.10') }}">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark"><span>G</span></div><div><b>GPU Profit Hunter</b><small>rental intelligence</small></div></div>
+      <div class="nav-label">WORKSPACE</div>
+      <button class="nav active" data-section="overview"><span class="nav-icon">◫</span> Overview</button>
+      <button class="nav" data-section="opportunities"><span class="nav-icon">⌕</span> Market scanner <span class="nav-count" id="navOpportunityCount">—</span></button>
+      <button class="nav" data-section="instances"><span class="nav-icon">▦</span> Instances <span class="nav-count" id="navInstanceCount">—</span></button>
+      <button class="nav" data-section="safety"><span class="nav-icon">⬡</span> Safety & setup</button>
+      <button class="nav" data-section="events"><span class="nav-icon">≋</span> Event log</button>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-status"><span class="status-dot idle" id="sidebarDot"></span><div><b id="sidebarMode">Scanner mode</b><small id="sidebarModeCaption">Live spending disabled</small></div></div>
+      <div class="sidebar-foot">v0.7.10 · rental intelligence</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><div class="eyebrow" id="pageEyebrow">CONTROL CENTER</div><h1 id="pageTitle">Overview</h1></div>
+        <div class="top-actions">
+          <div class="api-status" id="apiStatus"><span class="status-dot idle"></span><span>Checking providers…</span></div>
+          <button class="fx-status" id="refreshFxBtn" type="button" title="Refresh the display-only USD/INR reference rate">USD/INR · checking… <span aria-hidden="true">↻</span></button>
+          {% if current_username %}<span class="session-user" title="Signed in account">Signed in as {{ current_username }}</span><form class="logout-form" method="post" action="{{ url_for('logout') }}"><button class="btn btn-secondary logout-btn" type="submit">Sign out</button></form>{% endif %}
+          <button class="btn btn-primary" id="scanBtn"><span>↻</span> Scan market</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+      <div id="setupGaps" class="setup-gaps hidden" role="region" aria-label="Missing API keys and setup"></div>
+      <section id="taskPanel" class="task-panel hidden" aria-live="polite" aria-busy="false">
+        <div class="task-top"><div class="task-lead"><div class="task-indicator" id="taskIndicator" aria-hidden="true"><span id="taskRingLabel">···</span></div><div><div class="section-kicker">LIVE ACTION STATUS · PROVIDER + PROFITABILITY</div><h2 id="taskTitle">Ready</h2><p id="taskDetail">When you start an action, its current step and result appear here.</p></div></div><span id="taskBadge" class="pill pill-muted">IDLE</span></div>
+        <div class="task-progress-track"><div id="taskProgressBar" class="task-progress-bar" style="width:0%"></div></div>
+        <div class="task-progress-meta"><span id="taskStage">Waiting for an action</span><strong id="taskPercent">0%</strong></div>
+        <ol id="taskSteps" class="task-steps"><li class="pending">Waiting for a button action</li></ol>
+      </section>
+
+      <section id="overviewSection" class="page-section">
+        <div class="hero-row">
+          <div class="hero-card">
+            <div class="hero-top"><span class="hero-label">AUTO-MINING GUARD</span><span class="pill pill-muted" id="modePill">SCAN ONLY</span></div>
+            <h2 id="heroHeadline">Find profit before spending</h2>
+            <p id="heroText">Connect the rental and profitability APIs to compare GPU rent against conservative mining revenue. No rental is started by default.</p>
+            <div class="hero-actions"><button class="btn btn-primary" id="heroScanBtn">Scan available GPUs <span>→</span></button><button class="btn btn-ghost" data-goto="safety">Review safety gates</button></div>
+            <div class="hero-bottom"><span class="status-dot idle"></span><span id="lastScanText">No market scan run yet</span><span class="separator">·</span><span>USD is the accounting base</span></div>
+          </div>
+          <div class="guard-card">
+            <div class="section-kicker">LIVE SPENDING STATUS</div>
+            <div class="guard-icon">⌑</div>
+            <h3 id="guardTitle">Protected by default</h3>
+            <p id="guardCopy">Live renting is disabled. The app will not spend until all safety gates and monitoring requirements pass.</p>
+            <div class="guard-stats"><div><small>Enabled miner profiles</small><b id="profileCount">0</b></div><div><small>Live blockers</small><b id="blockerCount">—</b></div></div>
+            <button class="text-button" data-goto="safety">View required setup <span>→</span></button>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card"><div class="metric-head"><span>Best candidate net / day</span><span class="metric-icon green">↗</span></div><div class="metric-value" id="metricNet">—</div><div class="metric-sub" id="metricNetSub">Qualified opportunities only</div><div class="metric-fx" id="metricNetInr">INR conversion loading…</div></div>
+          <div class="metric-card"><div class="metric-head"><span>Current rental burn</span><span class="metric-icon amber">◷</span></div><div class="metric-value" id="metricBurn">$0.00<span class="unit">/hr</span></div><div class="metric-sub" id="metricBurnSub">$0.00 daily run-rate</div><div class="metric-fx" id="metricBurnInr">INR conversion loading…</div></div>
+          <div class="metric-card"><div class="metric-head"><span>GPU offers scanned</span><span class="metric-icon blue">▦</span></div><div class="metric-value" id="metricOffers">—</div><div class="metric-sub" id="metricCoinsSub">Coin coverage loads from API</div></div>
+          <div class="metric-card"><div class="metric-head"><span>Profit gate passed</span><span class="metric-icon purple">✓</span></div><div class="metric-value" id="metricQualified">—</div><div class="metric-sub" id="metricQualifiedSub">Requires price, data, and mining-profile gates</div></div>
+        </div>
+
+        <div class="finance-row">
+          <div class="panel wallet-panel">
+            <div class="panel-head"><div><div class="section-kicker">VAST ACCOUNT</div><h3>Wallet balance & 24-hour runway</h3><p>Live credit balance from your authenticated Vast account; never inferred from mining revenue.</p></div><button class="text-button" id="refreshVastBalanceBtn" type="button">↻ Refresh balance</button></div>
+            <div class="wallet-metrics">
+              <div class="wallet-metric"><small>Current Vast credits</small><b id="vastBalanceValue">Checking…</b><span id="vastBalanceInr" class="metric-fx">INR conversion loading…</span><small id="vastBalanceUpdated">Waiting for a provider response</small></div>
+              <div class="wallet-metric"><small>Estimated funds for next 24h</small><b id="vastRequired24h">Calculating from target…</b><span id="vastRequired24hInr" class="metric-fx">—</span><small id="vastFundingSource">Includes active rentals and any estimated target slots</small></div>
+              <div class="wallet-metric"><small>Funding status</small><b id="vastFundingGap">Checking…</b><span id="vastFundingCoverage" class="metric-fx">—</span><small>Minimum shown is the modeled 24-hour requirement, not a guaranteed bill.</small></div>
+            </div>
+            <div id="vastFundsAlert" class="funds-alert hidden" role="status" aria-live="polite"></div>
+            <p class="fine-print">The estimate includes current hourly rental rates plus the configured daily bandwidth reserve. Storage, traffic, price changes, and provider billing details can differ from this estimate.</p>
+          </div>
+          <div class="panel profit-panel">
+            <div class="panel-head"><div><div class="section-kicker">PROFITABILITY TRACKER</div><h3>Expected vs achieved</h3><p>Forecasts and pool-observed results are shown separately.</p></div><span class="pill pill-muted">USD base</span></div>
+            <div class="profit-metrics">
+              <div class="profit-metric"><small>Expected net / day</small><b id="expectedNetProfit">—</b><span id="expectedNetInr" class="metric-fx">—</span><p id="expectedNetNote">Run a scan to estimate a candidate.</p></div>
+              <div class="profit-metric"><small>Achieved net · rolling 24h</small><b id="achievedNetProfit">Not available yet</b><span id="achievedNetInr" class="metric-fx">—</span><p id="achievedNetNote">Requires fresh pool revenue and a matching 24-hour rental window.</p></div>
+            </div>
+            <p class="fine-print">Observed net is shown only when the current pool data and rental-cost window align. It subtracts estimated rent and configured bandwidth reserve from pool-reported 24-hour revenue; missing fees, storage and payout adjustments may not be captured.</p>
+          </div>
+        </div>
+
+        <div class="bottom-grid automation-grid">
+          <div class="panel automation-panel"><div class="panel-head"><div><h3>Automatic deployment target</h3><p>Choose 0 for scanning only, or a target of 1–N instances. The bot ranks by conservative net profit after rental costs; daily spend and safety caps can keep the actual count lower.</p></div><span class="pill pill-muted" id="automationModeLabel">SCAN ONLY</span></div>
+            <div class="automation-controls"><label for="targetInstances">Target simultaneous instances (0–25)</label><input id="targetInstances" type="number" min="0" max="25" step="1" value="1" inputmode="numeric" aria-describedby="targetInstanceHelp" required><small id="targetInstanceHelp">Enter any whole number from 0 to 25, then click Save target. 0 means scan only. This is the desired total, not extra instances. Save changes the target; Deploy target now runs an immediate evaluation. If Auto-rent is enabled, later qualified scans may fill the saved target.</small></div>
+            <div class="target-visibility" aria-live="polite">
+              <div><small>Selected target</small><strong id="targetSelectedCount">1 instance</strong></div>
+              <div><small>Active now</small><strong id="targetActiveCount">0 instances</strong></div>
+              <div><small>Fully qualified candidates</small><strong id="targetQualifiedCount">0</strong></div>
+            </div>
+            <p class="target-selection-help" id="targetSelectionHelp">Start with one simultaneous rental. The target is a ceiling, not one rental per offer. Existing active instances count toward the target.</p>
+            <label class="automation-checkbox"><input type="checkbox" id="autoRentEnabled"> Automatically rent qualified opportunities to fill target</label>
+            <div class="hero-actions"><button class="btn btn-secondary" id="saveAutomationBtn">Save target</button><button class="btn btn-primary" id="deployTargetBtn">Deploy target now</button></div>
+            <p class="fine-print" id="automationHelp">Auto-deploy requires live mode, an eligible Vast payment source, enabled miner profiles, SSH monitoring, and pool telemetry. No unsafe bypass is provided.</p>
+          </div>
+          <div class="panel kryptex-panel"><div class="panel-head"><div><h3>Kryptex Pool connection</h3><p>Live account/worker telemetry from Kryptex public API; separate from predicted mining revenue.</p></div><button class="text-button" id="refreshKryptexBtn">↻ Refresh</button></div>
+            <div class="kryptex-status-row"><span class="status-dot idle" id="kryptexDot"></span><strong id="kryptexConnection">Not configured</strong><span class="pill pill-muted" id="kryptexCoin">PRL</span></div>
+            <div class="kryptex-config-form">
+              <label>Public Kryptex mining username / payout wallet<input id="kryptexUsernameInput" type="text" maxlength="200" placeholder="Wallet address or Kryptex pool username" autocomplete="off" spellcheck="false"></label>
+              <div class="kryptex-config-row"><label>Coin slug<input id="kryptexCoinInput" type="text" maxlength="16" value="prl" placeholder="prl" autocapitalize="none"></label><label>Worker name (optional)<input id="kryptexWorkerInput" type="text" maxlength="32" placeholder="gpu-worker-1" autocomplete="off"></label></div>
+              <div class="kryptex-config-actions"><button class="btn btn-secondary" id="saveKryptexConfigBtn">Save & test connection</button><span class="fine-print">Public pool lookup; no API key or account password needed. Never enter a seed phrase or private key.</span></div>
+            </div>
+            <div class="kryptex-stats"><div><small>Workers</small><b id="kryptexWorkers">—</b></div><div><small>API-reported hashrate</small><b id="kryptexHashrate">—</b></div><div><small>Pool balance</small><b id="kryptexBalance">—</b></div><div><small>Coin price sample</small><b id="kryptexPrice">—</b></div></div>
+            <p class="fine-print" id="kryptexNote">Enter the public pool username or payout wallet and coin, then save and test. Account balance is not daily income.</p>
+            <div class="kryptex-market-subpanel">
+              <div class="panel-head"><div><h3>Optional Kryptex GPU references</h3><p>The documented API covers pool/miner telemetry. The per-GPU benchmark endpoint is disabled until verified and is not used to make rental decisions.</p></div><span class="pill pill-muted" id="kryptexGpuCoverage">Waiting for scan</span></div>
+              <div class="table-wrap"><table><thead><tr><th>GPU model</th><th>Coin / algorithm</th><th>Hashrate</th><th>Power</th><th>Daily revenue</th><th>Daily profit</th></tr></thead><tbody id="kryptexGpuRows"><tr><td colspan="6" class="empty-cell">Run the scanner to query Kryptex GPU references.</td></tr></tbody></table></div>
+              <p class="fine-print" id="kryptexGpuNote">This Kryptex table is a secondary market-data source. Rental opportunities still use independently calculated offers versus conservative revenue.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-heading"><div><div class="section-kicker">MARKET WATCH</div><h2>Best opportunities</h2><p>Sorted by conservative estimated net after rental and fees.</p></div><button class="btn btn-secondary" data-goto="opportunities">View full scanner <span>→</span></button></div>
+        <div class="table-wrap"><table><thead><tr><th>GPU / offer</th><th>Coin / algorithm</th><th>All-in rent</th><th>Conservative gross/day</th><th>Expected net/day</th><th>Coverage</th><th>Decision</th></tr></thead><tbody id="topOpportunities"><tr><td colspan="7" class="empty-cell">No scan data yet. Add API keys in .env, then scan the market.</td></tr></tbody></table></div>
+        <div class="bottom-grid">
+          <div class="panel"><div class="panel-head"><div><h3>Active rentals</h3><p>Live rate and monitored status.</p></div><button class="text-button" data-goto="instances">View all →</button></div><div id="miniInstances" class="mini-list"><div class="empty-state">No connected Vast instances.</div></div></div>
+          <div class="panel"><div class="panel-head"><div><h3>Risk monitor</h3><p>Conditions that block live auto-renting.</p></div><span class="pill pill-muted" id="riskPill">CHECKING</span></div><div id="riskMini" class="risk-list"><div class="empty-state">Checking configuration…</div></div><button class="text-button" data-goto="safety">Open safety settings →</button></div>
+        </div>
+      </section>
+
+      <section id="opportunitiesSection" class="page-section hidden">
+        <div class="section-heading scanner-heading"><div><div class="section-kicker">VAST OFFERS × COIN REVENUE</div><h2>Market scanner</h2><p>All models and coins surfaced by connected providers. Estimates are haircut before applying rent costs. USD is the accounting base; ₹ figures are display-only conversions using the timestamped FX quote.</p></div><div class="scanner-controls"><select id="decisionFilter"><option value="all">All candidates</option><option value="economics">Economically positive</option><option value="qualified">Live-qualified only</option><option value="rejected">Rejected / uncertain</option></select><input id="searchFilter" placeholder="Filter GPU, coin, algorithm…" aria-label="Filter offers"></div></div>
+        <div class="inline-warning"><span>ⓘ</span><div><b>Never treat a benchmark as guaranteed revenue.</b> Provider data can be stale, market rewards can shift, and pool-reported earnings may lag. The loss guard requires a compatible profile and live monitoring.</div></div>
+        <div id="scanDiagnostics" class="scan-diagnostics" aria-live="polite"><div class="scan-diagnostics-head"><span class="scan-orb idle"></span><div><b>Market scan status</b><small>Waiting for the latest server state…</small></div></div></div>
+        <div class="section-heading diagnostics-heading"><div><div class="section-kicker">OFFER-LEVEL AUDIT</div><h3>Every returned offer and why it passed or failed</h3><p>Includes benchmark mismatches, missing provider fields, reliability failures, and offers with no supported coin calculations.</p></div><span id="offerReviewCount" class="pill pill-muted">0 offers reviewed</span></div>
+        <div class="table-wrap offer-diagnostic-wrap"><table class="offer-diagnostic-table"><thead><tr><th>Offer / GPU</th><th>Rent / hr</th><th>Reliability</th><th>Verified / rentable</th><th>Benchmark match</th><th>Best net/day estimate</th><th>Result / explanation</th></tr></thead><tbody id="offerReviewTable"><tr><td colspan="7" class="empty-cell">Offer-level diagnostics appear after a provider query returns offers.</td></tr></tbody></table></div>
+        <div class="section-heading"><div><div class="section-kicker">COIN-LEVEL PROFITABILITY</div><h3>Coin / algorithm calculations</h3><p>Ranked by conservative net after rent and fees.</p></div></div>
+        <div class="table-wrap scanner-table"><table><thead><tr><th>GPU / offer</th><th>Coin / algorithm</th><th>Rent / hr</th><th>Gross/day</th><th>Conservative net/day</th><th>Rev. / cost</th><th>Reliability</th><th>Data</th><th>Action</th></tr></thead><tbody id="allOpportunities"><tr><td colspan="9" class="empty-cell">Run a scan to load current offers.</td></tr></tbody></table></div>
+        <div class="fine-print" id="scannerFoot">Scan data source: not connected.</div>
+      </section>
+
+      <section id="instancesSection" class="page-section hidden">
+        <div class="section-heading"><div><div class="section-kicker">RENTAL CONTROL</div><h2>Instances & live performance</h2><p>All running Vast instances plus locally retained deployment/destruction history, including auto-stop reasons.</p></div><button class="btn btn-secondary" id="refreshInstancesBtn">↻ Refresh instances</button></div>
+        <div class="inline-warning"><span>!</span><div><b>Estimated vs realized earnings:</b> WhatToMine estimates are forecasts; the Kryptex panel separately shows public pool telemetry where available. Balance is not daily income.</div></div>
+        <div class="table-wrap"><table><thead><tr><th>Instance</th><th>Status</th><th>Rate</th><th>Observed hashrate</th><th>GPU temp / util</th><th>Accepted evidence</th><th>Conservative gross/day</th><th>Net forecast/day</th><th>Action</th></tr></thead><tbody id="instanceTable"><tr><td colspan="9" class="empty-cell">No instances loaded.</td></tr></tbody></table></div>
+      </section>
+
+      <section id="safetySection" class="page-section hidden">
+        <div class="section-heading"><div><div class="section-kicker">CONFIGURATION</div><h2>Safety & setup</h2><p>API secrets belong in Render Environment or your local .env file; this dashboard never displays them.</p></div></div>
+        <div class="setup-grid">
+          <div class="panel setup-panel"><div class="panel-head"><div><h3>Provider connections</h3><p>Required data sources for a live market scan.</p></div></div><div id="providerList" class="check-list"></div><div class="setup-command"><b>Required Render environment entries</b><code>VAST_API_KEY=…
+WHATTOMINE_API_TOKEN=…
+KRYPTEX_MINING_USERNAME=…
+KRYPTEX_COIN=prl</code><span>Render can prompt for these values during Blueprint setup. Keep API secrets in Environment, never in source control.</span></div></div>
+          <div class="panel setup-panel"><div class="panel-head"><div><h3>Risk limits</h3><p>Read-only in this release; edit .env and restart to change them.</p></div></div><div id="limitList" class="limit-list"></div></div>
+          <div class="panel setup-panel"><div class="panel-head"><div><h3>Dashboard sign-in</h3><p>Username can be checked here; the password is never returned to the browser.</p></div><span class="pill pill-muted" id="loginSetupPill">LOGIN CHECK</span></div><div id="loginSetup" class="check-list"><div class="empty-state">Loading authentication settings…</div></div><div class="setup-command"><b>Change or reset your login</b><code>Render → Web Service → Environment</code><span>Set APP_USER for the username (default: gph) and APP_PASSWORD for the password. Save and redeploy. Use a unique password and never paste it into chat or source control.</span></div></div>
+          <div class="panel setup-panel wide"><div class="panel-head"><div><h3>Live automation gates</h3><p>All must pass before the rent endpoint can create a machine.</p></div><span class="pill pill-muted" id="liveGatesPill">BLOCKED</span></div><div id="blockerList" class="check-list blocker-list"></div></div>
+          <div class="panel setup-panel wide"><div class="panel-head"><div><h3>Mining profiles & wallet configuration</h3><p>Provider data can scan many coins, but each auto-mined algorithm needs a compatible, reviewed miner command and payout address.</p></div></div><div class="profile-explainer"><div class="profile-step"><b>1</b><div><strong>Copy the example catalog</strong><code>data/mining_profiles.example.json → data/mining_profiles.json</code></div></div><div class="profile-step"><b>2</b><div><strong>Add a verified profile</strong><span>Set the coin tag, algorithm, supported GPU models, miner image, start command, expected hashrate and log parser. Placeholder profiles are deliberately disabled.</span></div></div><div class="profile-step"><b>3</b><div><strong>Add public payout addresses</strong><code>data/wallets.json</code><span>Use only public receiving addresses. Never put seed phrases or private keys in the app.</span></div></div><div class="profile-step"><b>4</b><div><strong>Set up remote monitoring</strong><span>Add the app's SSH public key to Vast, configure SSH_PRIVATE_KEY_PATH, and ensure the miner logs parseable hashrate plus accepted shares. Live rentals are destroyed if performance cannot be verified.</span></div></div></div></div>
+        </div>
+      </section>
+
+      <section id="eventsSection" class="page-section hidden">
+        <div class="section-heading"><div><div class="section-kicker">AUDIT TRAIL</div><h2>Event log</h2><p>Scans, rejected deals, guardrail decisions and rental lifecycle events.</p></div><button class="btn btn-secondary" id="refreshEventsBtn">↻ Refresh log</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Time (UTC)</th><th>Level</th><th>Event</th><th>Details</th></tr></thead><tbody id="eventTable"><tr><td colspan="4" class="empty-cell">No events.</td></tr></tbody></table></div>
+      </section>
+      <footer class="footer"><span>GPU Profit Hunter</span><span>Conservative estimate ≠ guaranteed profit · No rental until guards pass</span><a href="https://vast.ai/developers/api" target="_blank" rel="noreferrer">Vast API docs ↗</a><a href="https://whattomine.com/api-docs" target="_blank" rel="noreferrer">WhatToMine API docs ↗</a><a href="https://pool.kryptex.com/api" target="_blank" rel="noreferrer">Kryptex Pool API ↗</a><a href="https://www.exchangerate-api.com/docs/free" target="_blank" rel="noreferrer">USD/INR reference by ExchangeRate-API ↗</a></footer>
+    </main>
+  </div>
+  <div id="confirmModal" class="modal hidden"><div class="modal-card"><div class="modal-mark">!</div><h3 id="modalTitle">Confirm action</h3><p id="modalText">This action affects a paid cloud resource.</p><div class="modal-actions"><button class="btn btn-secondary" id="modalCancel">Cancel</button><button class="btn btn-danger" id="modalConfirm">Confirm</button></div></div></div>
+  <script src="{{ url_for('static', filename='app.js', v='0.7.10') }}"></script>
+</body>
+</html>

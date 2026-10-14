@@ -1,0 +1,37 @@
+{
+  "profiles": [
+    {
+      "id": "example-pearl-profile",
+      "enabled": false,
+      "coin_tags": [
+        "PRL"
+      ],
+      "algorithms": [
+        "PearlHash"
+      ],
+      "gpu_models": [
+        "*"
+      ],
+      "image": "nvidia/cuda:12.2.2-base-ubuntu22.04",
+      "disk_gb": 12,
+      "wallet_key": "PRL",
+      "worker": "gph-worker",
+      "pool_fee_pct": 1.0,
+      "miner_fee_pct": 2.0,
+      "log_path": "/tmp/gph-miner.log",
+      "expected_hashrate_hs": 0,
+      "onstart": "# Put your reviewed miner install/start command here. It must write miner output to /tmp/gph-miner.log. Use environment variables GPH_WALLET and GPH_WORKER. Do not enable this example until you have verified the miner binary and pool configuration.",
+      "pool_metrics": {
+        "name": "example pool JSON adapter",
+        "url": "https://your-pool.example/api/worker/{wallet}/{worker}",
+        "bearer_token_env": "POOL_API_TOKEN",
+        "revenue_24h_usd_path": "data.revenue_24h_usd",
+        "realized_revenue_24h_usd_path": "",
+        "hashrate_hs_path": "data.hashrate_hs",
+        "hashrate_unit": "H/s",
+        "accepted_shares_path": "data.accepted_shares",
+        "balance_usd_path": "data.balance_usd"
+      }
+    }
+  ]
+}
