@@ -357,6 +357,8 @@ class Supervisor:
                     "configured": True, "available": False,
                     "balance_usd": (cached.get("balance_usd") if isinstance(cached, dict) else None),
                     "account_username": (cached.get("account_username", "") if isinstance(cached, dict) else ""),
+                    "account_id": (cached.get("account_id") if isinstance(cached, dict) else None),
+                    "account_verified": False,
                     "updated_at": (cached.get("updated_at") if isinstance(cached, dict) else None),
                     "last_success_at": (cached.get("last_success_at") if isinstance(cached, dict) else None),
                     "error": str(exc)[:240], "refreshing": False,
