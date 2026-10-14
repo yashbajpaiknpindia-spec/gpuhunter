@@ -731,6 +731,12 @@ class Supervisor:
                 if str(x.get("coin_tag") or "").upper() == coin
                 and str(x.get("gpu_name") or "").lower().replace("nvidia geforce ", "").replace("nvidia ", "") == gpu
                 and (not managed_algorithm or _algokey(x.get("algorithm")) == _algokey(managed_algorithm))
+                # A new scan timestamp does not make old provider economics fresh.
+                # Only refresh the rental's profitability clock when the underlying
+                # revenue data itself is marked fresh and still yields positive revenue.
+                and bool(x.get("data_fresh"))
+                and parse_num(x.get("gross_day_usd"), 0) > 0
+                and parse_num(x.get("conservative_gross_day_usd"), 0) > 0
             ]
             if not matches:
                 continue
