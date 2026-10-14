@@ -69,7 +69,7 @@ def _optional_bool(value: Any) -> bool | None:
 def _offer_safety_reasons(offer: dict[str, Any], min_reliability: float) -> tuple[list[str], float, int, bool | None, bool | None]:
     """Assess an offer for display and live-rental safety, including unknown metadata."""
     stage = str(offer.get("_gph_search_stage") or "").lower()
-    strict_query_passed = stage == "strict"
+    strict_query_passed = stage in {"strict", "targeted"}
     reasons: list[str] = []
     gpu_count_raw = offer.get("num_gpus")
     gpu_count = int(parse_num(gpu_count_raw, 1 if strict_query_passed else 0))
