@@ -348,7 +348,11 @@ class Database:
                 break
             except Exception as exc:
                 pool_busy = isinstance(exc, RuntimeError) and "pool is busy" in str(exc)
-                if attempt == 0 and self.is_postgres and (pool_busy or self._is_transient_connection_error(exc)):
+                # A pool checkout timeout means every connection is already occupied.
+                # Retrying immediately competes with the work holding those connections
+                # and worsens saturation. Retry only broken-connection errors that the
+                # pool can replace; pool pressure should degrade this dashboard read once.
+                if attempt == 0 and self.is_postgres and not pool_busy and self._is_transient_connection_error(exc):
                     import logging
                     logging.getLogger(__name__).warning(
                         "Transient PostgreSQL connection failure during dashboard read; retrying once (%s)",
@@ -454,8 +458,10 @@ class Database:
                 )
 
     def get_opportunities(self, limit: int = 300) -> list[dict[str, Any]]:
-        # Bound DB transfer time if a legacy deployment contains extra retained rows.
-        row_cap = min(max(int(limit) * 5, 2000), 10000)
+        # This table is replaced after each scan; reading thousands of full JSON
+        # payloads is unnecessary and holds a pooled connection while monitoring runs.
+        # Keep reads bounded even if callers request a large historical-looking limit.
+        row_cap = min(max(int(limit), 300), 1200)
         with self.session() as conn:
             rows = conn.execute(
                 "SELECT payload_json FROM gph_opportunities ORDER BY scanned_at DESC LIMIT ?",
