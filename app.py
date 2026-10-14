@@ -549,6 +549,7 @@ def state():
             "profiles_enabled": sum(bool(p.get("enabled")) for p in profiles),
             "last_scan_at": settings.get("last_scan_at"),
             "last_scan_summary": settings.get("last_scan_summary", {}),
+            "gpu_affordability_catalog": settings.get("gpu_affordability_catalog", {}) or {},
             "offer_diagnostics": settings.get("last_scan_offer_diagnostics", []) or [],
             "ui_progress": supervisor.current_ui_progress(),
             "automation": supervisor.automation_state(settings=settings),
