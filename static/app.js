@@ -146,16 +146,39 @@ function renderOfferDiagnostics(){
     return `<tr><td><div class="gpu-cell">${esc(x.gpu_name||'Unknown GPU')}</div><div class="sub-cell">Offer #${esc(x.offer_id)} · ${esc(x.region||'Unknown region')} · ${esc(x.search_stage||'unknown')} query</div></td><td><div class="money">${currency(x.total_hourly_usd,4)}/h</div><div class="sub-cell">${esc(inrLabel(x.total_hourly_usd,4))}/h</div></td><td>${number(Number(x.reliability||0)*100,1)}%</td><td><span class="scan-flag ${x.verified===true?'good':x.verified===false?'bad':'unknown'}">V ${esc(verified)}</span> <span class="scan-flag ${x.rentable===true?'good':x.rentable===false?'bad':'unknown'}">R ${esc(rentable)}</span></td><td>${x.benchmark_matched?`<span class="pill pill-good">MATCHED</span><div class="sub-cell">${esc(x.benchmark_gpu_name||'GPU benchmark')}</div>`:`<span class="pill pill-bad">NO MATCH</span><div class="sub-cell">No calculation</div>`}</td><td><div class="money ${Number(x.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${x.best_expected_net_day_usd===null||x.best_expected_net_day_usd===undefined?'—':currency(x.best_expected_net_day_usd)}</div><div class="sub-cell">best supported coin/algorithm</div></td><td><span class="pill ${tone}">${esc(state)}</span><div class="diagnostic-reasons">${esc(reasons)}</div><div class="sub-cell">${Number(x.coin_pairs_evaluated||0)} pairs · ${Number(x.economically_positive_pairs||0)} economics-positive</div></td></tr>`;
   }).join('');
 }
+function renderAffordabilityCatalogue(catalog){
+  const table=$('affordabilityTable'); if(!table)return;
+  const models=Array.isArray(catalog?.models)?catalog.models:[];
+  if(!models.length){table.innerHTML='<tr><td colspan="5" class="empty-cell">No fresh GPU affordability models yet. Run Scan market to build the catalogue; stale or unpriced models are not used to target rentals.</td></tr>';return;}
+  table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}</td></tr>`).join('');
+}
+function readScanRequirements(){
+  const numberOrNull=(id)=>{const raw=$(id)?.value?.trim();if(!raw)return null;const n=Number(raw);return Number.isFinite(n)?n:null;};
+  return {
+    gpu_model:($('scanGpuModel')?.value||'').trim(),
+    coin:($('scanCoin')?.value||'').trim(),
+    max_total_hourly_usd:numberOrNull('scanMaxHourly'),
+    min_net_profit_usd_day:numberOrNull('scanMinNet')??0,
+    min_reliability_pct:numberOrNull('scanMinReliability')??99
+  };
+}
 function renderOpportunities(){
   if(!appState) return;
   renderScanDiagnostics(appState); renderOfferDiagnostics();
   const rows=appState.opportunities||[]; const filter=$('decisionFilter')?.value||'all'; const query=($('searchFilter')?.value||'').toLowerCase().trim();
+  const targetGpu=($('scanGpuModel')?.value||'').toLowerCase().trim();
+  const targetCoin=($('scanCoin')?.value||'').toLowerCase().trim();
+  const minNet=Number($('scanMinNet')?.value||0);
   const visible=rows.filter(x=>{
     if(filter==='economics'&&!x.economics_qualified)return false;
     if(filter==='qualified'&&!x.qualified)return false;
     if(filter==='rejected'&&x.qualified)return false;
+    if(targetGpu&&!String(x.gpu_name||'').toLowerCase().includes(targetGpu))return false;
+    if(targetCoin&&!String(x.coin_tag||'').toLowerCase().includes(targetCoin)&&!String(x.coin_name||'').toLowerCase().includes(targetCoin))return false;
+    if(Number(x.expected_net_day_usd??-1e9)<minNet)return false;
     const text=`${x.gpu_name} ${x.coin_tag} ${x.coin_name} ${x.algorithm} ${x.offer_id} ${(x.reasons||[]).join(' ')}`.toLowerCase(); return !query||text.includes(query);
   });
+  renderAffordabilityCatalogue(appState.gpu_affordability_catalog||{});
   let empty='No coin-level rows match these filters. Offer-level audit below still shows every returned Vast offer and its reason for exclusion.';
   if(!rows.length){
     const summary=appState.last_scan_summary||{};
@@ -639,7 +662,7 @@ async function scanMarket(){
     showTask('Scan GPU market','Starting background scan','Sending a bounded request; progress polling starts immediately so a slow acknowledgement cannot freeze the UI.',5,'running');
     // Do not await the start acknowledgement before polling. The previous flow could
     // remain at 5% forever if a proxy/DB connection stalled the POST response.
-    const startPromise=api('/api/scan',{method:'POST',body:JSON.stringify({}),signal:AbortSignal.timeout(8000)})
+    const startPromise=api('/api/scan',{method:'POST',body:JSON.stringify({filters:readScanRequirements()}),signal:AbortSignal.timeout(8000)})
       .then(data=>{startResult={ok:true,data};})
       .catch(err=>{startResult={ok:false,error:err};startErrorAt=Date.now();});
     const deadline=Date.now()+15*60*1000; let terminal=null; let lastPollError='';
@@ -700,6 +723,8 @@ $('modalCancel').addEventListener('click',closeModal);$('modalConfirm').addEvent
 $('scanBtn').addEventListener('click',scanMarket);$('heroScanBtn').addEventListener('click',scanMarket);
 $('saveKryptexConfigBtn').addEventListener('click',configureKryptex);$('refreshInstancesBtn').addEventListener('click',()=>runUiTask('Refresh instances',$('refreshInstancesBtn'),async()=>{showTask('Refresh instances','Requesting current provider instances', 'Loading live Vast instance state and local managed history',30,'running'); await refresh({keepNotice:true,throwOnError:true}); showTask('Refresh instances','Complete','Instance table and counters updated',100,'complete');},'Loading provider and local instance history').catch(err=>setNotice(err.message,'error')));$('refreshEventsBtn').addEventListener('click',()=>runUiTask('Refresh event log',$('refreshEventsBtn'),async()=>{showTask('Refresh event log','Loading audit events','Fetching latest saved events and rendering the event table',35,'running'); await refresh({keepNotice:true,throwOnError:true}); showTask('Refresh event log','Complete','Audit event table updated',100,'complete');},'Loading the latest audit trail').catch(err=>setNotice(err.message,'error')));$('saveAutomationBtn').addEventListener('click',saveAutomation);$('deployTargetBtn').addEventListener('click',deployTarget);$('refreshKryptexBtn').addEventListener('click',refreshKryptex);
 $('decisionFilter').addEventListener('change',renderOpportunities);$('searchFilter').addEventListener('input',renderOpportunities);
+['scanGpuModel','scanCoin','scanMinNet'].forEach(id=>$(id)?.addEventListener('input',()=>{if(appState)renderOpportunities();}));
+$('resetScanFilters')?.addEventListener('click',()=>{$('scanGpuModel').value='';$('scanCoin').value='';$('scanMaxHourly').value='';$('scanMinNet').value='0';$('scanMinReliability').value='99';if(appState)renderOpportunities();});
 $('targetInstances').addEventListener('input',()=>{updateTargetPreview();if(appState)renderFinance(appState);});
 $('targetInstances').addEventListener('change',()=>{updateTargetPreview();if(appState)renderFinance(appState);});
 $('refreshFxBtn').addEventListener('click',async()=>{const b=$('refreshFxBtn');b.disabled=true;const prior=b.textContent;b.textContent='Refreshing USD/INR…';try{const data=await api('/api/fx/refresh',{method:'POST',body:JSON.stringify({})});if(appState)appState.fx=data.fx||{};renderFx(data.fx||{});document.querySelectorAll('.metric-fx').forEach(x=>{if(x.id==='metricNetInr'){const best=appState?.summary?.best_candidate;x.textContent=best?`${inrLabel(best.expected_net_day_usd)} /day · display conversion only`:'INR appears here when a qualified estimate exists';}else{const sm=appState?.summary||{};x.textContent=`${inrLabel(sm.current_hourly_cost_usd||0)}/hr · ${inrLabel(sm.projected_current_daily_rent_usd||0)}/day`;}});if(appState)renderState(appState);setNotice(data.fx?.refresh_throttled?`The FX provider was checked recently. Keeping the current ${data.fx?.available?'fresh':'unavailable'} quote; try again in about ${Math.ceil((data.fx?.retry_after_seconds||60)/60)} minute(s).`:data.fx?.available?'USD/INR reference refreshed. USD remains the accounting base; this does not alter profit gates.':(data.fx?.error||'A fresh USD/INR quote is unavailable.'),data.fx?.available&&!data.fx?.refresh_throttled?'success':'info');}catch(err){setNotice(err.message,'error');}finally{b.disabled=false;if(!appState?.fx?.available)b.textContent=prior;}});
