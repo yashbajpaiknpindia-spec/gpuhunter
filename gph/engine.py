@@ -194,7 +194,7 @@ class OpportunityScanner:
                 errors.append(exc)
         raise min(errors, key=lambda e: float(getattr(e, "retry_after", 0) or 0))
 
-    def _run_vast_search(self, vast, plan, progress):
+    def _run_vast_search(self, vast, plan, progress, scan_filters=None):
         provider_search: dict[str, Any]
         detailed_search = getattr(vast, "search_offers_with_diagnostics", None)
         stored_catalog = self.db.get_setting("gpu_affordability_catalog", {}) or {}
@@ -211,14 +211,26 @@ class OpportunityScanner:
             stored_catalog.get("models", [])
             if plan.get("include_audit") and isinstance(stored_catalog, dict) and catalog_fresh else []
         )
+        filters = scan_filters if isinstance(scan_filters, dict) else {}
+        user_max_hourly = parse_num(filters.get("max_total_hourly_usd"), 0.0)
+        configured_max_hourly = parse_num(self.config.max_total_hourly_usd, 0.0)
+        effective_max_hourly = min(user_max_hourly, configured_max_hourly) if user_max_hourly > 0 and configured_max_hourly > 0 else (user_max_hourly or configured_max_hourly)
+        gpu_model = str(filters.get("gpu_model") or "").strip()
+        min_reliability = min(max(parse_num(filters.get("min_reliability_pct"), self.config.min_reliability * 100.0) / 100.0, 0.0), 1.0)
+        if gpu_model:
+            affordability_budgets = [
+                row for row in affordability_budgets
+                if gpu_model.casefold() in str(row.get("gpu_name") or "").casefold()
+            ]
         if callable(detailed_search):
             provider_search = detailed_search(
-                limit=plan["strict_limit"], min_reliability=self.config.min_reliability,
+                limit=plan["strict_limit"], min_reliability=min_reliability,
                 progress_callback=progress,
                 include_audit=plan["include_audit"], audit_limit=plan["audit_limit"] or None,
                 audit_skip_reason=plan["audit_skip_reason"],
                 order=self.config.vast_search_order,
-                max_total_hourly_usd=self.config.max_total_hourly_usd,
+                max_total_hourly_usd=effective_max_hourly,
+                gpu_model=gpu_model,
                 affordability_budgets=affordability_budgets,
             )
             offers = list(provider_search.get("offers") or [])
@@ -234,7 +246,14 @@ class OpportunityScanner:
 
     def scan(self, progress_callback=None) -> dict[str, Any]:
         progress = progress_callback or (lambda stage, percent, detail: None)
-        progress("Validating provider configuration", 3, "Checking required Vast and WhatToMine credentials")
+        scan_filters = self.db.get_setting("scan_market_filters", {}) or {}
+        if not isinstance(scan_filters, dict):
+            scan_filters = {}
+        selected_coin = str(scan_filters.get("coin") or "").strip().upper()
+        min_user_net = parse_num(scan_filters.get("min_net_profit_usd_day"), 0.0)
+        user_max_hourly = parse_num(scan_filters.get("max_total_hourly_usd"), 0.0)
+        selected_gpu = str(scan_filters.get("gpu_model") or "").strip().casefold()
+        progress("Validating provider configuration", 3, "Checking required Vast and WhatToMine credentials and your scan requirements")
         if not self.config.vast_api_key:
             raise RuntimeError("VAST_API_KEY is missing. Add it to .env to scan current rentals.")
         if not self.config.whattomine_api_token:
@@ -254,7 +273,7 @@ class OpportunityScanner:
                      f"Searching up to {plan['strict_limit']} verified, rentable single-GPU offers{via} "
                      f"({budget.rows_used_today():,}/{budget.usable_rows:,} daily search rows used)")
             try:
-                offers, provider_search = self._run_vast_search(vast, plan, progress)
+                offers, provider_search = self._run_vast_search(vast, plan, progress, scan_filters)
                 provider_search["search_key"] = label
                 break
             except VastRateLimitError as exc:
@@ -381,8 +400,12 @@ class OpportunityScanner:
                 })
                 continue
             gpu_name = str(offer.get("gpu_name") or offer.get("gpu_name_display") or offer.get("model_name") or "Unknown GPU")
-            safety_reasons, reliability, normalized_gpu_count, verified_status, rentable_status = _offer_safety_reasons(offer, self.config.min_reliability)
             gpu_rate, total_rate, disk_rate = offer_hourly_cost(offer)
+            safety_reasons, reliability, normalized_gpu_count, verified_status, rentable_status = _offer_safety_reasons(offer, min(max(parse_num(scan_filters.get("min_reliability_pct"), self.config.min_reliability * 100) / 100, 0), 1))
+            if selected_gpu and selected_gpu not in gpu_name.casefold():
+                safety_reasons.append("Does not match requested GPU model filter: " + str(scan_filters.get("gpu_model")))
+            if user_max_hourly > 0 and total_rate > user_max_hourly:
+                safety_reasons.append("All-in rental rate $" + format(total_rate, ".4f") + "/h exceeds your requested cap $" + format(user_max_hourly, ".4f") + "/h")
             review: dict[str, Any] = {
                 "offer_id": offer_id, "gpu_name": gpu_name,
                 "region": offer.get("geolocation") or offer.get("country") or offer.get("region") or "Unknown",
@@ -424,6 +447,8 @@ class OpportunityScanner:
             for row in rows:
                 coin_tag = _tag(row.get("tag") or row.get("symbol"))
                 if not coin_tag:
+                    continue
+                if selected_coin and coin_tag.upper() != selected_coin and str(row.get("name") or "").strip().upper() != selected_coin:
                     continue
                 coin_ref = coin_map.get(coin_tag)
                 coin_name = str(row.get("name") or (coin_ref or {}).get("name") or coin_tag)
@@ -479,6 +504,12 @@ class OpportunityScanner:
                     live_capability_ready=live_capability_ready,
                     additional_reasons=extra_reasons,
                 )
+                if parse_num(p.get("expected_net_day_usd"), -1e9) < min_user_net:
+                    p["reasons"] = list(p.get("reasons") or []) + [
+                        "Below your requested minimum net profit of $" + format(min_user_net, ".2f") + "/day"
+                    ]
+                    p["economics_qualified"] = False
+                    p["qualified"] = False
                 # Reverse the same conservative economics gates to tell the operator the
                 # maximum all-in Vast rate this GPU/coin pair could afford. This is a
                 # decision ceiling, not a quote: disk/bandwidth reserve, fees, haircut,
