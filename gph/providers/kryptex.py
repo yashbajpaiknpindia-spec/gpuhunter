@@ -278,11 +278,16 @@ class KryptexPoolClient:
         coin_info = results.get("coin_info")
         price_chart = results.get("price_chart")
         hr_keys = ("hashrate", "hash_rate", "current_hashrate", "reported_hashrate", "average_hashrate", "speed")
-        bal_keys = ("balance", "amount", "total_balance", "available", "unpaid", "immature")
+        bal_keys = ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature", "confirmed", "unconfirmed")
         hashrate = _first_number(chart, hr_keys)
         if hashrate is None:
             hashrate = _first_number(workers, hr_keys)
         balance_value = _first_number(balance, bal_keys)
+        if balance_value is None and isinstance(balance, dict):
+            confirmed = _first_number(balance, ("confirmed",))
+            unconfirmed = _first_number(balance, ("unconfirmed",))
+            if confirmed is not None or unconfirmed is not None:
+                balance_value = (confirmed or 0.0) + (unconfirmed or 0.0)
         price_keys = ("price_usd", "usd_price", "current_price", "price", "usd")
         coin_price = _first_number(coin_info, price_keys)
         if coin_price is None:
@@ -299,6 +304,7 @@ class KryptexPoolClient:
             if not worker_rows and any(k in workers for k in ("worker", "name", "status")):
                 worker_rows = [workers]
         worker_count = len(worker_rows)
+        miner_data_available = worker_count > 0 or hashrate is not None or balance_value is not None
         # Return only a compact sample rather than an entire API document.
         worker_preview = []
         for row in worker_rows[:20]:
@@ -307,7 +313,7 @@ class KryptexPoolClient:
         return {
             "configured": True,
             "connected": True,
-            "account_data_available": any(x is not None for x in (workers, chart, balance)),
+            "account_data_available": miner_data_available,
             "source": "Kryptex Pool public API",
             "coin": coin.upper(),
             "username": raw_username[:4] + "…" + raw_username[-3:] if len(raw_username) > 8 else "[configured]",
@@ -319,10 +325,10 @@ class KryptexPoolClient:
             "coin_price_sample": coin_price,
             "coin_price_available": coin_price is not None,
             "chart_available": chart is not None,
-            "balance_available": balance is not None,
+            "balance_available": balance_value is not None,
             "payout_stats_available": False,
             "pool_info_available": pool_info is not None,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "error": ("Kryptex Pool API is reachable, but no miner data was returned for this public username and coin. Confirm the exact mining address/username and pool coin slug." if not any(x is not None for x in (workers, chart, balance)) else None),
-            "note": "Pool telemetry only; reported balance is not daily revenue. GPU profitability is calculated separately from mining benchmarks and rental prices.",
+            "error": ("Kryptex Pool API is reachable, but no usable worker, hashrate, or numeric balance data was returned for this username and coin. Confirm the exact public Mining Username and coin slug; a missing balance is not assumed to be zero." if not miner_data_available else None),
+            "note": "Pool telemetry only; reported balance is not daily revenue. If no numeric balance or active worker/hashrate data is returned, verify the public Mining Username and coin slug. GPU profitability is calculated separately from mining benchmarks and rental prices.",
         }
