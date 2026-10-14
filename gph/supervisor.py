@@ -1307,7 +1307,6 @@ class Supervisor:
             realized_24h = parse_num((pool_report or {}).get("realized_revenue_24h_usd"), -1.0)
             if runtime_hours >= 24 and realized_24h >= 0:
                 realized_net_24h = realized_24h * max(0, 1 - (miner_fee_pct + pool_fee_pct) / 100) - cost_day
-                managed["latest_realized_net_24h"] = realized_net_24h
                 meta["realized_revenue_24h_usd"] = realized_24h
                 meta["realized_net_24h_usd"] = realized_net_24h
                 if realized_net_24h < self.config.min_net_profit_usd_day or (cost_day > 0 and (realized_24h * max(0, 1 - (miner_fee_pct + pool_fee_pct) / 100)) / cost_day < self.config.min_revenue_cost_ratio):
