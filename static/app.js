@@ -219,7 +219,7 @@ function formatHashrate(value){
   return number(n,2)+' (API units)';
 }
 function renderKryptex(k,market={}){
-  const connected=Boolean(k.connected); $('kryptexDot').className='status-dot '+(k.refreshing?'idle':(connected?'good':'bad'));
+  const connected=Boolean(k.connected), accountData=Boolean(k.account_data_available); $('kryptexDot').className='status-dot '+(k.refreshing?'idle':(connected&&accountData?'good':(connected?'idle':'bad')));
   $('kryptexConnection').textContent=k.refreshing?'Checking Kryptex API…':(connected?(k.account_data_available?'API connected · account data available':'Pool API connected · no worker data returned'):(k.configured?'Connection issue':'Not configured'));
   $('kryptexCoin').textContent=(k.coin||appState?.config?.kryptex_coin||'prl').toUpperCase();
   $('kryptexWorkers').textContent=k.worker_count??'—'; $('kryptexHashrate').textContent=formatHashrate(k.hashrate_raw);
@@ -293,8 +293,8 @@ async function refreshKryptex(){
     const message=status.connected
       ? (status.account_data_available?'Kryptex Pool API connected; account/worker telemetry returned.':'Kryptex Pool API is reachable, but this username/coin has no worker telemetry yet.')
       : (status.error||'Kryptex connection failed; verify the public username/wallet and coin slug.');
-    setNotice(message,status.connected?'success':'error');
-    showTask('Refresh Kryptex data',status.connected?'Complete':'Connection check failed',message,100,status.connected?'complete':'failed');
+    setNotice(message,status.connected?(status.account_data_available?'success':'info'):'error');
+    showTask('Refresh Kryptex data',status.connected?'Complete':'Connection check failed',message,100,status.connected?(status.account_data_available?'complete':'failed'):'failed');
   },'Checking the documented Kryptex Pool API'); }
   catch(err){setNotice(err.message,'error');}
 }
@@ -312,7 +312,7 @@ async function configureKryptex(){
     const message=status.connected
       ? (status.account_data_available?'Kryptex identity saved and account/worker API verified.':'Kryptex Pool API is reachable, but no account worker data was returned yet. Confirm that coin and public username match your Kryptex pool miner.')
       : (status.error||'Kryptex configuration was saved but the live API check failed.');
-    setNotice(message,status.connected?'success':'error');
+    setNotice(message,status.connected?(status.account_data_available?'success':'info'):'error');
   }catch(err){setNotice(err.message,'error');}
   finally{btn.disabled=false;btn.textContent=prior;}
 }
