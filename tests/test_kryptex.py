@@ -78,6 +78,32 @@ class KryptexGPUReferenceTests(unittest.TestCase):
         self.assertTrue(any("/pool/info" in path for path in seen))
         self.assertFalse(status["payout_stats_available"])
 
+    def test_balance_uses_total_or_sums_confirmed_and_unconfirmed(self):
+        from gph.providers.kryptex import _first_number
+
+        self.assertAlmostEqual(_first_number({"total": "1.25", "confirmed": 1.0, "unconfirmed": 0.25}, ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature")), 1.25)
+        balance = {"confirmed": "0.50", "unconfirmed": "0.25"}
+        value = _first_number(balance, ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature"))
+        if value is None:
+            confirmed = _first_number(balance, ("confirmed",))
+            unconfirmed = _first_number(balance, ("unconfirmed",))
+            if confirmed is not None or unconfirmed is not None:
+                value = (confirmed or 0.0) + (unconfirmed or 0.0)
+        self.assertAlmostEqual(value, 0.75)
+
+    def test_empty_worker_list_is_not_account_data(self):
+        client = KryptexPoolClient(timeout=1)
+        client._get = lambda path, ttl=60, optional=False: (
+            {"pool": "active"} if path.endswith("/pool/info")
+            else [] if "/workers/" in path
+            else None
+        )
+        status = client.account_status("prl", "public_wallet_123456")
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["worker_count"], 0)
+        self.assertFalse(status["account_data_available"])
+        self.assertFalse(status["balance_available"])
+
     def test_pool_reachable_but_no_wallet_telemetry_is_explicit(self):
         client = KryptexPoolClient(timeout=1)
         client._get = lambda path, ttl=60, optional=False: ({"pool": "active"} if path.endswith("/pool/info") else None)
