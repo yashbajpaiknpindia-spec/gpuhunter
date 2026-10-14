@@ -33,6 +33,13 @@ class _PostgresConnection:
             if statement.strip():
                 self.execute(statement)
 
+    def executemany(self, sql: str, params_seq: Iterable[Iterable[Any]]):
+        # Use psycopg's batched execution for repeated writes. With the app and
+        # database in different Render regions, one execute() per row adds a full
+        # network round trip per opportunity and can hold a transaction open for
+        # tens of seconds while the dashboard waits for fresh data.
+        return self._conn.executemany(sql.replace("?", "%s"), params_seq)
+
     def commit(self) -> None:
         self._conn.commit()
 
@@ -321,7 +328,11 @@ class Database:
                     # window rather than keeping a pool checkout open for an unbounded fetch.
                     # Each row carries a large JSON payload; a 3,000-row read (left over from the old
                     # 1,000-offer scans) held a pooled connection for ~18s per dashboard poll.
-                    row_cap = min(max(int(opportunity_limit) * 8, 800), 3000)
+                    # Fetch at most twice the displayed count (minimum 300). The old
+                    # 8x/3,000-row cap was intended for historical scans, but dashboard
+                    # cards need only the current ranked shortlist and this transfer is
+                    # particularly costly over the current cross-region database link.
+                    row_cap = min(max(int(opportunity_limit) * 2, 300), 800)
                     opportunity_rows = conn.execute(
                         "SELECT payload_json FROM gph_opportunities ORDER BY scanned_at DESC LIMIT ?",
                         (row_cap,),
@@ -418,21 +429,28 @@ class Database:
         ]
 
     def replace_opportunities(self, items: list[dict[str, Any]]) -> None:
+        # Serialize once, then batch the PostgreSQL upserts. Do not perform a full
+        # request/response round trip for each row: the scanner's persistence phase
+        # used to hold a write transaction open while the remote database was in
+        # Singapore and the web service was in Ohio.
+        prepared = [
+            (item["id"], item["scanned_at"], int(item["offer_id"]), item["coin_tag"],
+             json.dumps(item, default=str))
+            for item in items
+        ]
         with _LOCK, self.session() as conn:
             conn.execute("DELETE FROM gph_opportunities")
-            for item in items:
-                payload = json.dumps(item, default=str)
-                if self.is_postgres:
-                    conn.execute(
-                        "INSERT INTO gph_opportunities(id,scanned_at,offer_id,coin_tag,payload_json) VALUES(?,?,?,?,?) "
-                        "ON CONFLICT(id) DO UPDATE SET scanned_at=EXCLUDED.scanned_at,offer_id=EXCLUDED.offer_id,coin_tag=EXCLUDED.coin_tag,payload_json=EXCLUDED.payload_json",
-                        (item["id"], item["scanned_at"], int(item["offer_id"]), item["coin_tag"], payload),
-                    )
-                else:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO gph_opportunities(id,scanned_at,offer_id,coin_tag,payload_json) VALUES(?,?,?,?,?)",
-                        (item["id"], item["scanned_at"], int(item["offer_id"]), item["coin_tag"], payload),
-                    )
+            if self.is_postgres:
+                conn.executemany(
+                    "INSERT INTO gph_opportunities(id,scanned_at,offer_id,coin_tag,payload_json) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET scanned_at=EXCLUDED.scanned_at,offer_id=EXCLUDED.offer_id,coin_tag=EXCLUDED.coin_tag,payload_json=EXCLUDED.payload_json",
+                    prepared,
+                )
+            else:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO gph_opportunities(id,scanned_at,offer_id,coin_tag,payload_json) VALUES(?,?,?,?,?)",
+                    prepared,
+                )
 
     def get_opportunities(self, limit: int = 300) -> list[dict[str, Any]]:
         # Bound DB transfer time if a legacy deployment contains extra retained rows.
