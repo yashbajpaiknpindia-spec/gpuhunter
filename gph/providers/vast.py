@@ -343,6 +343,7 @@ class VastClient:
 
         targeted_offers: list[dict[str, Any]] = []
         targeted_errors: list[str] = []
+        rate_limit: dict[str, Any] | None = None
         targeted_budgets = affordability_budgets if isinstance(affordability_budgets, list) else []
         # Use previously measured conservative per-model economics to ask Vast for the exact
         # GPU models at or below their affordable all-in rate. This targeted pass runs only
@@ -389,7 +390,6 @@ class VastClient:
         fallback_keys: list[str] = []
         fallback_error = ""
         audit_ran = False
-        rate_limit: dict[str, Any] | None = rate_limit
         if include_audit and strict_error:
             audit_skip_reason = "the preferred query failed, so a second query would likely fail too"
             include_audit = False
@@ -480,8 +480,9 @@ class VastClient:
             )
         elif fallback_offers:
             diagnostic = (
-                f"Strict GET returned {len(strict_offers)} rows; broad fallback GET returned {len(fallback_offers)} rows; "
-                f"{len(offers)} unique offers retained for the audit (duplicates merged). Broad-only offers "
+                f"Strict GET returned {len(strict_offers)} rows; affordability-targeted GET returned {len(targeted_offers)} rows; "
+                f"broad fallback GET returned {len(fallback_offers)} rows; {len(offers)} unique offers retained (duplicates merged). "
+                "Broad-only offers "
                 "are reviewed locally and cannot rent unless one-GPU, verification, rentability and reliability checks pass."
             )
         elif offers:
@@ -505,8 +506,8 @@ class VastClient:
         if request_errors:
             diagnostic += " " + " ".join(request_errors)
 
-        query_stage = "combined" if strict_offers and fallback_offers else (
-            "strict" if strict_offers else ("fallback" if fallback_offers else "empty")
+        query_stage = "combined" if (strict_offers or targeted_offers) and fallback_offers else (
+            "strict" if strict_offers else ("targeted" if targeted_offers else ("fallback" if fallback_offers else "empty"))
         )
         return {
             "offers": offers,
