@@ -321,10 +321,15 @@ class Supervisor:
                 # This read-only call uses a short timeout. The dashboard starts it
                 # in a worker and polls status instead of tying up a request thread.
                 user = VastClient(self.config.vast_api_key, self.config.vast_api_base, timeout=6).get_current_user()
+                raw_account_id = user.get("id", user.get("user_id", user.get("uid")))
+                account_id = str(raw_account_id).strip() if raw_account_id is not None else ""
+                expected_account_id = str(getattr(self.config, "vast_expected_account_id", "") or "").strip()
+                if not account_id:
+                    raise ValueError("Vast current-user response did not include an account ID; balance is not verified")
+                if expected_account_id and account_id != expected_account_id:
+                    raise ValueError(f"Vast API key belongs to account ID {account_id}, not the configured expected account; balance is not verified")
                 raw_balance = user.get("balance")
                 if raw_balance is None or isinstance(raw_balance, bool):
-                    # Vast's account payload exposes the prepaid amount as "credit" on some
-                    # accounts/API versions; accept it instead of showing "Unable to verify".
                     raw_balance = user.get("credit")
                 if raw_balance is None or isinstance(raw_balance, bool):
                     raise ValueError("Vast current-user response did not include a numeric balance or credit field")
@@ -334,6 +339,8 @@ class Supervisor:
                 result = {
                     "configured": True, "available": True, "balance_usd": round(balance, 4),
                     "account_username": str(user.get("username") or "")[:80],
+                    "account_id": account_id,
+                    "account_verified": True,
                     "updated_at": now_iso(), "last_success_at": now_iso(), "error": None, "refreshing": False,
                 }
                 self._vast_balance_cache = dict(result)
@@ -350,6 +357,8 @@ class Supervisor:
                     "configured": True, "available": False,
                     "balance_usd": (cached.get("balance_usd") if isinstance(cached, dict) else None),
                     "account_username": (cached.get("account_username", "") if isinstance(cached, dict) else ""),
+                    "account_id": (cached.get("account_id") if isinstance(cached, dict) else None),
+                    "account_verified": False,
                     "updated_at": (cached.get("updated_at") if isinstance(cached, dict) else None),
                     "last_success_at": (cached.get("last_success_at") if isinstance(cached, dict) else None),
                     "error": str(exc)[:240], "refreshing": False,

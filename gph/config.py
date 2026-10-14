@@ -59,6 +59,8 @@ class Config:
     database_url: str = os.getenv("DATABASE_URL", "").strip()
     database_path: str = os.getenv("DATABASE_PATH", str(ROOT / "data" / "gph.sqlite3"))
     vast_api_key: str = os.getenv("VAST_API_KEY", "").strip()
+    # Expected account identity is public metadata; mismatch fails closed before displaying a verified balance.
+    vast_expected_account_id: str = os.getenv("VAST_EXPECTED_ACCOUNT_ID", "32570835").strip()
     # Optional SEARCH-ONLY keys from other Vast accounts (comma/newline/semicolon separated). Never used to rent or pay.
     vast_search_api_keys: tuple = tuple(k.strip() for k in re.split(r"[,;\s]+", os.getenv("VAST_SEARCH_API_KEYS", "")) if k.strip())
     whattomine_api_token: str = os.getenv("WHATTOMINE_API_TOKEN", "").strip()
