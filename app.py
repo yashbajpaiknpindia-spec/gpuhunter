@@ -364,11 +364,21 @@ def health():
         except OSError:
             asset_sizes[name] = 0
     assets_ok = all(size > 0 for size in asset_sizes.values())
+    with _STATE_CACHE_LOCK:
+        snapshot_at = float(_BUNDLE_CACHE.get("at") or 0.0)
+        snapshot_available = _BUNDLE_CACHE.get("bundle") is not None
+    snapshot_age = max(0.0, time.monotonic() - snapshot_at) if snapshot_available else None
     return jsonify({
         "ok": True, "app": "GPU Profit Hunter", "version": "0.7.12",
         "time": now_iso(), "asset_sizes_bytes": asset_sizes, "assets_ok": assets_ok,
         "database": {"backend": db.backend, "connection_pool_enabled": db.pool_enabled,
                      "connection_pool_stats": db.pool_stats()},
+        "dashboard_snapshot": {
+            "available": snapshot_available,
+            "age_seconds": round(snapshot_age, 1) if snapshot_age is not None else None,
+            "refresh_in_progress": _BUNDLE_READ_LOCK.locked(),
+            "freshness_limit_seconds": int(_BUNDLE_TTL_SECONDS),
+        },
         "max_ui_target_instances": 25,
     })
 
@@ -432,50 +442,79 @@ _BUNDLE_READ_LOCK = Lock()
 _BUNDLE_TTL_SECONDS = 10.0
 
 
-def _dashboard_bundle() -> dict[str, Any]:
-    """Shared, single-flight dashboard read.
+def _annotate_dashboard_bundle(bundle: dict[str, Any], cached_at: float, refreshing: bool) -> dict[str, Any]:
+    """Return a shallow copy with cache freshness metadata for the UI."""
+    age = max(0.0, time.monotonic() - float(cached_at or 0.0))
+    result = dict(bundle)
+    result["_gph_dashboard_meta"] = {
+        "age_seconds": round(age, 1),
+        "stale": age >= _BUNDLE_TTL_SECONDS,
+        "refreshing": bool(refreshing),
+    }
+    return result
 
-    Every browser tab polls /api/state, and each poll used to open its own heavy database
-    transaction. Several tabs plus the supervisor starved the small connection pool ("pool is
-    busy"). Now at most one read runs at a time; everyone else gets the cached result
-    (<=10s old), or the last good one while the database is unavailable.
+
+def _refresh_dashboard_bundle_worker() -> None:
+    """Refresh the shared snapshot away from the request path.
+
+    A DB/socket read can occasionally outlive its PostgreSQL statement timeout (for
+    example, during a broken cross-region TLS connection). Never let that hold a Gunicorn
+    request thread until the browser's 25-second timeout. Only one reader is permitted;
+    while it runs, requests get the last snapshot or a small safe cold-start response.
     """
-    now = time.monotonic()
-    with _STATE_CACHE_LOCK:
-        cached, age = _BUNDLE_CACHE["bundle"], now - _BUNDLE_CACHE["at"]
-    if cached is not None and age < _BUNDLE_TTL_SECONDS:
-        return cached
-    if cached is None:
-        # Cold cache: wait for an in-flight read, but only briefly. An unbounded wait let
-        # every dashboard poll pile up behind a dead database until all gunicorn threads
-        # were stuck, so even the login page and health checks stopped answering.
-        if not _BUNDLE_READ_LOCK.acquire(timeout=2.5):
-            # The original reader may have completed while this request was waiting.
-            # Re-check the shared cache before returning a cold-start 503; another
-            # browser tab may have populated it just as the wait expired.
-            with _STATE_CACHE_LOCK:
-                cached_after_wait = _BUNDLE_CACHE["bundle"]
-            if cached_after_wait is not None:
-                return cached_after_wait
-            raise RuntimeError("Dashboard snapshot refresh is still running; retry shortly")
-    elif not _BUNDLE_READ_LOCK.acquire(blocking=False):
-        return cached  # another request is already refreshing; do not queue behind it
+    started = time.monotonic()
     try:
-        with _STATE_CACHE_LOCK:
-            if _BUNDLE_CACHE["bundle"] is not None and time.monotonic() - _BUNDLE_CACHE["at"] < _BUNDLE_TTL_SECONDS:
-                return _BUNDLE_CACHE["bundle"]
-        try:
-            bundle = db.get_dashboard_bundle(opportunity_limit=150, event_limit=50)
-        except Exception:
-            if cached is None:
-                raise
-            app.logger.warning("Dashboard read failed; serving the cached snapshot (%.0fs old)", age)
-            return cached
+        bundle = db.get_dashboard_bundle(opportunity_limit=150, event_limit=50)
         with _STATE_CACHE_LOCK:
             _BUNDLE_CACHE.update(bundle=bundle, at=time.monotonic())
-        return bundle
+        app.logger.info(
+            "Dashboard snapshot refresh completed in %.2fs (opportunities=%d, events=%d)",
+            time.monotonic() - started,
+            len(bundle.get("opportunities", []) or []),
+            len(bundle.get("events", []) or []),
+        )
+    except Exception as exc:
+        app.logger.warning(
+            "Dashboard snapshot refresh failed after %.2fs (%s); pool_stats=%s",
+            time.monotonic() - started,
+            exc.__class__.__name__,
+            db.pool_stats(),
+        )
     finally:
         _BUNDLE_READ_LOCK.release()
+
+
+def _dashboard_bundle() -> dict[str, Any]:
+    """Return the shared dashboard snapshot without blocking on database I/O.
+
+    Stale/missing snapshots trigger one background read. Requests immediately receive
+    the last successful data with freshness metadata; during a cold start, they receive
+    the existing safe degraded fallback rather than tying up all web threads.
+    """
+    with _STATE_CACHE_LOCK:
+        cached, cached_at = _BUNDLE_CACHE["bundle"], float(_BUNDLE_CACHE["at"] or 0.0)
+    age = time.monotonic() - cached_at
+    if cached is not None and age < _BUNDLE_TTL_SECONDS:
+        return _annotate_dashboard_bundle(cached, cached_at, refreshing=False)
+
+    # Acquire once and transfer lock ownership to the worker. If a reader is already
+    # running, no request waits for it or starts another database read.
+    if _BUNDLE_READ_LOCK.acquire(blocking=False):
+        try:
+            Thread(
+                target=_refresh_dashboard_bundle_worker,
+                name="gph-dashboard-snapshot-refresh",
+                daemon=True,
+            ).start()
+        except Exception:
+            _BUNDLE_READ_LOCK.release()
+            app.logger.exception("Could not start dashboard snapshot refresh worker")
+
+    with _STATE_CACHE_LOCK:
+        cached, cached_at = _BUNDLE_CACHE["bundle"], float(_BUNDLE_CACHE["at"] or 0.0)
+    if cached is not None:
+        return _annotate_dashboard_bundle(cached, cached_at, refreshing=_BUNDLE_READ_LOCK.locked())
+    raise RuntimeError("Dashboard snapshot refresh is still running; no previous snapshot is available yet")
 
 
 @app.get("/api/state")
@@ -484,6 +523,7 @@ def state():
     global _STATE_CACHE
     try:
         bundle = _dashboard_bundle()
+        snapshot_meta = bundle.pop("_gph_dashboard_meta", {"age_seconds": None, "stale": False, "refreshing": False})
         settings = bundle.get("settings", {})
         opportunities = bundle.get("opportunities", [])
         instances = _instances_for_ui(
@@ -521,9 +561,22 @@ def state():
             "vast_balance": vast_balance,
             "funding": funding,
             "events": bundle.get("events", []),
-            "database_status": {"available": True, "backend": db.backend, "snapshot": "fresh"},
+            "database_status": {
+                "available": not bool(snapshot_meta.get("stale")),
+                "backend": db.backend,
+                "snapshot": "stale" if snapshot_meta.get("stale") else "fresh",
+                "snapshot_age_seconds": snapshot_meta.get("age_seconds"),
+                "refreshing": bool(snapshot_meta.get("refreshing")),
+                "error": (
+                    "Dashboard database refresh is running in the background; showing the last saved snapshot."
+                    if snapshot_meta.get("stale") and snapshot_meta.get("refreshing")
+                    else "Dashboard snapshot is stale; the last background refresh did not complete. The UI will retry automatically."
+                    if snapshot_meta.get("stale")
+                    else None
+                ),
+            },
             "setup_gaps": config.setup_gaps(profiles),
-            "degraded": False,
+            "degraded": bool(snapshot_meta.get("stale")),
         }
         with _STATE_CACHE_LOCK:
             _STATE_CACHE = copy.deepcopy(payload)
