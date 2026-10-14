@@ -118,3 +118,20 @@
 @media(max-width:760px){.scan-diagnostics{padding:12px}.scan-diagnostics-head{align-items:flex-start}.scan-diagnostics-copy>b{font-size:11px}.scan-live-percent{padding-top:4px}.scan-diagnostics-reason{margin-left:0}.diagnostics-heading{align-items:flex-start;flex-direction:column;gap:8px}}
 
 .setup-gaps{border:1px solid #f1dfac;background:#fff8e8;color:#6f5110;border-radius:12px;padding:14px 16px;margin:0 0 18px;font-size:12px;line-height:1.55}.setup-gaps b.setup-title{display:block;font-size:13px;margin-bottom:6px}.setup-gaps ul{margin:6px 0 0;padding-left:18px}.setup-gaps li{margin:4px 0;overflow-wrap:anywhere}.setup-gaps code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:5px;font-size:11px}.setup-gaps details{margin-top:8px}.setup-gaps summary{cursor:pointer;font-weight:700}.setup-gaps .gap-required{color:#972c37;font-weight:700}
+
+
+/* v0.7.13: visible profit-first search controls and affordability catalogue. */
+.smart-scan-panel{margin:0 0 18px;padding:16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:var(--shadow)}
+.smart-scan-panel .panel-head{align-items:flex-start;margin-bottom:13px}
+.smart-scan-panel .panel-head h3{font-size:15px;margin:4px 0}
+.smart-scan-panel .panel-head p{font-size:11px;line-height:1.6;max-width:850px}
+.smart-scan-controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px}
+.smart-scan-controls label{display:grid;align-content:start;gap:6px;min-width:0;color:var(--muted);font-size:10px;font-weight:750}
+.smart-scan-controls input{width:100%;min-width:0;box-sizing:border-box;min-height:39px;border:1px solid #dfe4ed;border-radius:8px;background:#fff;color:var(--ink);padding:0 10px;font:inherit;font-size:12px;font-weight:600}
+.smart-scan-controls input:focus{outline:2px solid #9cb8ff;outline-offset:1px}
+.smart-scan-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:13px}
+.smart-scan-actions>span{font-size:10px;color:var(--muted);line-height:1.5;flex:1;min-width:220px}
+.affordability-wrap{margin-bottom:20px}
+.affordability-wrap table{min-width:800px}
+@media(max-width:1100px){.smart-scan-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.smart-scan-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.smart-scan-panel{padding:12px}.smart-scan-actions{align-items:stretch;flex-direction:column}.smart-scan-actions .btn{align-self:flex-start}}
