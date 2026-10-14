@@ -205,6 +205,10 @@ class OpportunityScanner:
                 audit_skip_reason=plan["audit_skip_reason"],
                 order=self.config.vast_search_order,
                 max_total_hourly_usd=self.config.max_total_hourly_usd,
+                affordability_budgets=(
+                    self.db.get_setting("gpu_affordability_catalog", [])
+                    if plan.get("include_audit") else []
+                ),
             )
             offers = list(provider_search.get("offers") or [])
         else:
@@ -568,9 +572,42 @@ class OpportunityScanner:
             status_key = str(review.get("status") or "UNKNOWN")
             rejection_counts[status_key] = rejection_counts.get(status_key, 0) + 1
         self.db.set_setting("last_scan_offer_diagnostics", offer_diagnostics[:500])
+        # Feed the next quota-paced targeted search with fresh, observed GPU-name ceilings.
+        # These are learned from current WhatToMine calculations and local Vast prices; a
+        # broad audit remains enabled to discover models not represented in this catalog.
+        affordability_by_gpu: dict[str, dict[str, Any]] = {}
+        for item in opportunities:
+            if not item.get("data_fresh") or parse_num(item.get("gross_day_usd"), 0) <= 0:
+                continue
+            gpu_key = str(item.get("gpu_name") or "").strip()
+            cap = parse_num(item.get("max_affordable_total_hourly_usd"), 0)
+            if not gpu_key or cap <= 0:
+                continue
+            previous = affordability_by_gpu.get(gpu_key)
+            score = parse_num(item.get("expected_net_day_usd"), -1e9)
+            if previous is None or score > parse_num(previous.get("best_expected_net_day_usd"), -1e9):
+                affordability_by_gpu[gpu_key] = {
+                    "gpu_name": gpu_key,
+                    "max_total_hourly_usd": round(cap, 6),
+                    "coin_tag": item.get("coin_tag"),
+                    "best_expected_net_day_usd": round(score, 6),
+                    "source_updated_at": item.get("revenue_source_updated_at") or item.get("data_updated_at"),
+                }
+        next_catalog = sorted(
+            affordability_by_gpu.values(),
+            key=lambda x: parse_num(x.get("best_expected_net_day_usd"), -1e9),
+            reverse=True,
+        )[:6]
+        if next_catalog:
+            self.db.set_setting("gpu_affordability_catalog", {
+                "updated_at": scanned_at,
+                "models": next_catalog,
+                "method": "fresh provider estimate + conservative profit gates",
+            })
         self.db.log("INFO", "market_scan_completed", {
             "offers_seen": len(offers), "strict_count": provider_search.get("strict_count", len(offers)),
             "fallback_count": provider_search.get("fallback_count", 0),
+            "targeted_count": provider_search.get("targeted_count", 0),
             "get_fallback_count": provider_search.get("get_fallback_count", 0),
             "query_stage": provider_search.get("query_stage"),
             "benchmark_gpus": len(gpus), "coin_rows": len(coins),
