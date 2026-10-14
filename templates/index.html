@@ -89,17 +89,17 @@
         </div>
 
         <div class="bottom-grid automation-grid">
-          <div class="panel automation-panel"><div class="panel-head"><div><h3>Automatic deployment target</h3><p>Choose 0 for scanning only, or a target of 1–N instances. The bot ranks by conservative net profit after rental costs; daily spend and safety caps can keep the actual count lower.</p></div><span class="pill pill-muted" id="automationModeLabel">SCAN ONLY</span></div>
-            <div class="automation-controls"><label for="targetInstances">Target simultaneous instances (0–25)</label><input id="targetInstances" type="number" min="0" max="25" step="1" value="1" inputmode="numeric" aria-describedby="targetInstanceHelp" required><small id="targetInstanceHelp">Enter any whole number from 0 to 25, then click Save target. 0 means scan only. This is the desired total, not extra instances. Save changes the target; Deploy target now runs an immediate evaluation. If Auto-rent is enabled, later qualified scans may fill the saved target.</small></div>
+          <div class="panel automation-panel"><div class="panel-head"><div><h3>Manual setup · automatic safety monitor</h3><p>You create, configure, start, and pay for Vast instances yourself. This application only monitors an instance after you explicitly enroll it.</p></div><span class="pill pill-muted" id="automationModeLabel">MANUAL MONITOR ONLY</span></div>
+            <div class="automation-controls"><label for="targetInstances">Display target (not used to rent)</label><input id="targetInstances" type="number" min="0" max="25" step="1" value="1" inputmode="numeric" aria-describedby="targetInstanceHelp" required><small id="targetInstanceHelp">This value is display-only in manual mode. Scanning never creates instances and the deployment action is disabled.</small></div>
             <div class="target-visibility" aria-live="polite">
               <div><small>Selected target</small><strong id="targetSelectedCount">1 instance</strong></div>
               <div><small>Active now</small><strong id="targetActiveCount">0 instances</strong></div>
               <div><small>Fully qualified candidates</small><strong id="targetQualifiedCount">0</strong></div>
             </div>
-            <p class="target-selection-help" id="targetSelectionHelp">Start with one simultaneous rental. The target is a ceiling, not one rental per offer. Existing active instances count toward the target.</p>
-            <label class="automation-checkbox"><input type="checkbox" id="autoRentEnabled"> Automatically rent qualified opportunities to fill target</label>
-            <div class="hero-actions"><button class="btn btn-secondary" id="saveAutomationBtn">Save target</button><button class="btn btn-primary" id="deployTargetBtn">Deploy target now</button></div>
-            <p class="fine-print" id="automationHelp">Auto-deploy requires live mode, an eligible Vast payment source, enabled miner profiles, SSH monitoring, and pool telemetry. No unsafe bypass is provided.</p>
+            <p class="target-selection-help" id="targetSelectionHelp">The application does not run the miner start command or auto-rent. Only instances you explicitly enroll are eligible for automatic destroy rules.</p>
+            <label class="automation-checkbox"><input type="checkbox" id="autoRentEnabled" disabled> Auto-rent unavailable in manual-setup mode</label>
+            <div class="hero-actions"><button class="btn btn-secondary" id="saveAutomationBtn">Save display target</button><button class="btn btn-primary" id="deployTargetBtn" disabled>Auto-rent disabled</button></div>
+            <p class="fine-print" id="automationHelp">Manual instance monitoring requires an SSH key and an enabled profile with a valid HTTPS pool-revenue endpoint and fresh source timestamp.</p>
           </div>
           <div class="panel kryptex-panel"><div class="panel-head"><div><h3>Kryptex Pool connection</h3><p>Live account/worker telemetry from Kryptex public API; separate from predicted mining revenue.</p></div><button class="text-button" id="refreshKryptexBtn">↻ Refresh</button></div>
             <div class="kryptex-status-row"><span class="status-dot idle" id="kryptexDot"></span><strong id="kryptexConnection">Not configured</strong><span class="pill pill-muted" id="kryptexCoin">PRL</span></div>
@@ -138,7 +138,7 @@
       </section>
 
       <section id="instancesSection" class="page-section hidden">
-        <div class="section-heading"><div><div class="section-kicker">RENTAL CONTROL</div><h2>Instances & live performance</h2><p>All running Vast instances plus locally retained deployment/destruction history, including auto-stop reasons.</p></div><button class="btn btn-secondary" id="refreshInstancesBtn">↻ Refresh instances</button></div>
+        <div class="section-heading"><div><div class="section-kicker">RENTAL CONTROL</div><h2>Instances & live performance</h2><p>Instances you created in Vast appear here as external. Enroll only your manually configured miner using an enabled monitoring profile; enrolled instances may be automatically destroyed if safety checks fail.</p></div><button class="btn btn-secondary" id="refreshInstancesBtn">↻ Refresh instances</button></div>
         <div class="inline-warning"><span>!</span><div><b>Estimated vs realized earnings:</b> WhatToMine estimates are forecasts; the Kryptex panel separately shows public pool telemetry where available. Balance is not daily income.</div></div>
         <div class="table-wrap"><table><thead><tr><th>Instance</th><th>Status</th><th>Rate</th><th>Observed hashrate</th><th>GPU temp / util</th><th>Accepted evidence</th><th>Conservative gross/day</th><th>Net forecast/day</th><th>Action</th></tr></thead><tbody id="instanceTable"><tr><td colspan="9" class="empty-cell">No instances loaded.</td></tr></tbody></table></div>
       </section>
