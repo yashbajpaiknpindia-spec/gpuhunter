@@ -365,7 +365,7 @@ def health():
             asset_sizes[name] = 0
     assets_ok = all(size > 0 for size in asset_sizes.values())
     return jsonify({
-        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.11",
+        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.12",
         "time": now_iso(), "asset_sizes_bytes": asset_sizes, "assets_ok": assets_ok,
         "database": {"backend": db.backend, "connection_pool_enabled": db.pool_enabled,
                      "connection_pool_stats": db.pool_stats()},
