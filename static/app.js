@@ -225,10 +225,9 @@ function renderKryptex(k,market={}){
   $('kryptexConnection').textContent=k.refreshing?'Checking Kryptex API…':(connected?(accountData?(hasWorker?'API connected · worker active':'API connected · account data available'):(checked?'Pool connected · no active worker data':'Pool API connected · awaiting first check')):(k.configured?(checked?'Connection issue':'Waiting for first check'):'Not configured'));
   $('kryptexCoin').textContent=(k.coin||appState?.config?.kryptex_coin||'prl').toUpperCase();
   $('kryptexWorkers').textContent=k.worker_count??(checked?'0 active':'—'); $('kryptexHashrate').textContent=formatHashrate(k.hashrate_raw);
-  if(checked&&!hasWorker&&!k.error) $('kryptexNote').textContent='No active worker telemetry was returned. This is expected when no miner is running; worker count and hashrate are shown as zero/unavailable, not as a loading state.';
   $('kryptexBalance').textContent=k.balance_available&&k.balance_raw!==null&&k.balance_raw!==undefined?number(k.balance_raw,8)+' coin units':'—';
   $('kryptexPrice').textContent=k.coin_price_available&&k.coin_price_sample!==null&&k.coin_price_sample!==undefined?number(k.coin_price_sample,8):'—';
-  $('kryptexNote').textContent=k.error||k.note||'Enter a public pool username/wallet above. Pool balance is not daily income.';
+  $('kryptexNote').textContent=k.error||k.note||(checked&&!hasWorker?'No active worker telemetry was returned. This is expected when no miner is running; worker count and hashrate are shown as zero/unavailable, not as a loading state.':'Enter a public pool username/wallet above. Pool balance is not daily income.');
   const models=market.models||[]; const available=models.filter(x=>x.available);
   $('kryptexGpuCoverage').className=`pill ${available.length?'pill-good':'pill-muted'}`;
   $('kryptexGpuCoverage').textContent=market.updated_at?`${available.length}/${market.attempted_models||models.length} models · ${market.updated_at.replace('T',' ').replace('Z',' UTC')}`:'Not scanned';
