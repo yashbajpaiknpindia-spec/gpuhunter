@@ -197,6 +197,11 @@ class OpportunityScanner:
     def _run_vast_search(self, vast, plan, progress):
         provider_search: dict[str, Any]
         detailed_search = getattr(vast, "search_offers_with_diagnostics", None)
+        stored_catalog = self.db.get_setting("gpu_affordability_catalog", {}) or {}
+        affordability_budgets = (
+            stored_catalog.get("models", [])
+            if plan.get("include_audit") and isinstance(stored_catalog, dict) else []
+        )
         if callable(detailed_search):
             provider_search = detailed_search(
                 limit=plan["strict_limit"], min_reliability=self.config.min_reliability,
@@ -205,11 +210,7 @@ class OpportunityScanner:
                 audit_skip_reason=plan["audit_skip_reason"],
                 order=self.config.vast_search_order,
                 max_total_hourly_usd=self.config.max_total_hourly_usd,
-                affordability_budgets=(
-                    (self.db.get_setting("gpu_affordability_catalog", {}) or {}).get("models", [])
-                    if plan.get("include_audit") and isinstance(self.db.get_setting("gpu_affordability_catalog", {}), dict)
-                    else []
-                ),
+                affordability_budgets=affordability_budgets,
             )
             offers = list(provider_search.get("offers") or [])
         else:
@@ -463,7 +464,14 @@ class OpportunityScanner:
                 required_ratio = max(parse_num(self.config.min_revenue_cost_ratio, 1.0), 0.01)
                 profit_limited_hourly = (after_fees_day - bandwidth_reserve - required_net) / 24.0
                 ratio_limited_hourly = (after_fees_day / required_ratio - bandwidth_reserve) / 24.0
-                max_affordable_hourly = max(0.0, min(profit_limited_hourly, ratio_limited_hourly))
+                daily_spend_limited_hourly = (
+                    max(parse_num(self.config.max_daily_spend_usd, 0.0) - bandwidth_reserve, 0.0) / 24.0
+                )
+                configured_total_cap = parse_num(self.config.max_total_hourly_usd, 0.0)
+                max_affordable_hourly = max(0.0, min(
+                    profit_limited_hourly, ratio_limited_hourly, daily_spend_limited_hourly,
+                    configured_total_cap if configured_total_cap > 0 else float("inf"),
+                ))
                 revenue_source = (
                     "WhatToMine + Kryptex GPU reference"
                     if kryptex_daily_revenue is not None
