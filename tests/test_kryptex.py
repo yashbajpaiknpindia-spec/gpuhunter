@@ -79,17 +79,32 @@ class KryptexGPUReferenceTests(unittest.TestCase):
         self.assertFalse(status["payout_stats_available"])
 
     def test_balance_uses_total_or_sums_confirmed_and_unconfirmed(self):
-        from gph.providers.kryptex import _first_number
+        client = KryptexPoolClient(timeout=1)
 
-        self.assertAlmostEqual(_first_number({"total": "1.25", "confirmed": 1.0, "unconfirmed": 0.25}, ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature")), 1.25)
-        balance = {"confirmed": "0.50", "unconfirmed": "0.25"}
-        value = _first_number(balance, ("total", "total_balance", "balance", "amount", "available", "unpaid", "immature"))
-        if value is None:
-            confirmed = _first_number(balance, ("confirmed",))
-            unconfirmed = _first_number(balance, ("unconfirmed",))
-            if confirmed is not None or unconfirmed is not None:
-                value = (confirmed or 0.0) + (unconfirmed or 0.0)
-        self.assertAlmostEqual(value, 0.75)
+        def fake_get(path, ttl=60, optional=False):
+            if path.endswith("/pool/info"):
+                return {"pool": "active"}
+            if "/balance/" in path:
+                return {"confirmed": "0.50", "unconfirmed": "0.25"}
+            if "/workers/" in path:
+                return []
+            return None
+
+        client._get = fake_get
+        status = client.account_status("prl", "public_wallet_123456")
+        self.assertAlmostEqual(status["balance_raw"], 0.75)
+        self.assertTrue(status["balance_available"])
+
+        def fake_total_get(path, ttl=60, optional=False):
+            if path.endswith("/pool/info"):
+                return {"pool": "active"}
+            if "/balance/" in path:
+                return {"total": "1.25", "confirmed": 1.0, "unconfirmed": 0.25}
+            return None
+
+        client._get = fake_total_get
+        total_status = client.account_status("prl", "public_wallet_123456")
+        self.assertAlmostEqual(total_status["balance_raw"], 1.25)
 
     def test_empty_worker_list_is_not_account_data(self):
         client = KryptexPoolClient(timeout=1)
