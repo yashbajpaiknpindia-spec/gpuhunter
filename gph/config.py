@@ -96,7 +96,8 @@ class Config:
     default_disk_gb: int = _int("DEFAULT_DISK_GB", 12)
     max_disk_gb: int = _int("MAX_DISK_GB", 20)
     auto_scan_enabled: bool = _bool("AUTO_SCAN_ENABLED", True)
-    auto_rent_enabled: bool = _bool("AUTO_RENT_ENABLED", False)
+    # Requested autonomous preference defaults on, but live mode and every spend/profitability gate remain mandatory.
+    auto_rent_enabled: bool = _bool("AUTO_RENT_ENABLED", True)
     # Vast rental opportunities refresh every 60 seconds by default. Provider revenue
     # feeds retain their own quota-aware caches, so this does not spam WhatToMine.
     scan_interval_seconds: int = _int("SCAN_INTERVAL_SECONDS", 60)

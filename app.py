@@ -369,7 +369,7 @@ def health():
         snapshot_available = _BUNDLE_CACHE.get("bundle") is not None
     snapshot_age = max(0.0, time.monotonic() - snapshot_at) if snapshot_available else None
     return jsonify({
-        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.14",
+        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.15",
         "time": now_iso(), "asset_sizes_bytes": asset_sizes, "assets_ok": assets_ok,
         "database": {"backend": db.backend, "connection_pool_enabled": db.pool_enabled,
                      "connection_pool_stats": db.pool_stats()},

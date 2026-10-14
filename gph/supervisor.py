@@ -173,20 +173,55 @@ class Supervisor:
 
     def _scan_async_worker(self) -> None:
         try:
-            self._scan_locked()
+            result = self._scan_locked(defer_completion=True)
+            # Make a user-triggered scan the same end-to-end workflow as a recurring
+            # scan: once fresh economics are saved, evaluate rentals if auto-rent is
+            # authorized. All spend/profitability/monitoring gates remain in _rent.
+            if self.config.automation_mode == "live" and self.config.enable_live_mining and self.auto_rent_is_enabled():
+                blockers = self.live_blockers()
+                if blockers:
+                    detail = "Scan complete; automatic rental remains blocked: " + "; ".join(blockers)
+                    self.db.log("INFO", "manual_scan_auto_rent_blocked", {"blockers": blockers})
+                    self.set_ui_progress("Automatic rental", "Blocked by live safety gates", 100, detail, "failed")
+                else:
+                    self.set_ui_progress(
+                        "Automatic rental", "Evaluating profitable candidates", 5,
+                        f"Scan found {result.get('qualified', 0)} qualified opportunity(s); revalidating current offers and costs",
+                    )
+                    try:
+                        created = self.auto_rent_to_target(
+                            progress_callback=lambda stage, percent, detail: self.set_ui_progress(
+                                "Automatic rental", stage, percent, detail, persist=False
+                            )
+                        )
+                        self.set_ui_progress(
+                            "Automatic rental", "Complete", 100,
+                            f"Scan complete; {len(created)} new rental(s) created. Zero means no candidate passed every live gate.",
+                            "complete",
+                        )
+                    except Exception as rent_exc:
+                        message = str(rent_exc)[:300]
+                        self.db.log("ERROR", "manual_scan_auto_rent_failed", {"error": message})
+                        self.set_ui_progress("Automatic rental", "Evaluation failed", 100, message, "failed")
+            else:
+                self.set_ui_progress(
+                    "Market scan", "Complete", 100,
+                    f"{result.get('offers_seen', 0)} offers scanned; results saved. Live auto-rental is not enabled.",
+                    "complete",
+                )
         except VastRateLimitError as exc:
             self._record_search_paused(exc)
         except Exception as exc:
             message = str(exc)[:300]
-            # Update memory first so polling can show the real failure even when
-            # PostgreSQL is the component that failed.
+            # Update memory first so polling can show the real failure even when DB
+            # persistence is the reason the scan failed.
             self.set_ui_progress("Market scan", "Failed", 100, message, "failed", persist=False)
             try:
                 self.db.log("ERROR", "market_scan_failed", {"error": message})
                 self.set_ui_progress("Market scan", "Failed", 100, message, "failed")
             except Exception:
                 # Preserve the original exception in Python/Gunicorn logs even if DB
-                # persistence itself is the reason the task failed.
+                # persistence itself is the reason the scan failed.
                 import logging
                 logging.getLogger(__name__).exception("Async market scan and failure persistence both failed")
         finally:
@@ -236,7 +271,7 @@ class Supervisor:
             interval = max(interval, budget.recommended_interval(), budget.cooldown_remaining())
         return interval
 
-    def _scan_locked(self) -> dict[str, Any]:
+    def _scan_locked(self, *, defer_completion: bool = False) -> dict[str, Any]:
         self.set_ui_progress("Market scan", "Starting scan", 1, "Preparing provider clients", persist=False)
         # Intermediate stage changes are polled from memory. Persisting every progress
         # tick created unnecessary DB transactions/connection churn during provider I/O;
@@ -290,7 +325,8 @@ class Supervisor:
         self.db.set_setting("last_gpu_models_seen", result.get("gpu_models_seen", []))
         # Reference refresh is deliberately decoupled from the interactive scan.
         threading.Thread(target=self.refresh_kryptex_gpu_market, kwargs={"force": False}, name="gph-kryptex-gpu-market", daemon=True).start()
-        self.set_ui_progress("Market scan", "Complete", 100, f"{result.get('offers_seen', 0)} offers scanned; results saved", "complete")
+        if not defer_completion:
+            self.set_ui_progress("Market scan", "Complete", 100, f"{result.get('offers_seen', 0)} offers scanned; results saved", "complete")
         self._refresh_managed_profit_context(result.get("scanned_at"))
         return result
 
