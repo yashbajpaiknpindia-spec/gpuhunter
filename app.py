@@ -358,7 +358,7 @@ def health():
             asset_sizes[name] = 0
     assets_ok = all(size > 0 for size in asset_sizes.values())
     return jsonify({
-        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.10",
+        "ok": True, "app": "GPU Profit Hunter", "version": "0.7.11",
         "time": now_iso(), "asset_sizes_bytes": asset_sizes, "assets_ok": assets_ok,
         "database": {"backend": db.backend, "connection_pool_enabled": db.pool_enabled,
                      "connection_pool_stats": db.pool_stats()},
@@ -541,15 +541,52 @@ def state():
             stale["kryptex"] = supervisor.cached_kryptex_status()
             stale["setup_gaps"] = _safe_setup_gaps()
             return jsonify(stale)
+        # Cold-start/database-outage fallback: keep the dashboard renderable instead of
+        # returning a 503 that leaves cards stuck at "Checking…". This is display-only;
+        # all paid actions must continue to revalidate provider/account state.
+        try:
+            safe_config = config.public_dict()
+        except Exception:
+            safe_config = {}
+        try:
+            safe_progress = supervisor.current_ui_progress()
+        except Exception:
+            safe_progress = {"action": None, "stage": "Unavailable", "percent": 0,
+                             "status": "idle", "detail": "Database snapshot unavailable"}
+        try:
+            safe_blockers = config.live_blockers(load_profiles(config.miner_profiles_path))
+        except Exception:
+            safe_blockers = ["Dashboard database unavailable; live spending remains blocked"]
         return jsonify({
-            "ok": False,
-            "error": "Dashboard data is temporarily unavailable because the database snapshot could not be read"
-                     f" ({exc.__class__.__name__}: {_safe_error_text(exc)}).",
-            "database_status": {"available": False, "backend": db.backend, "error_type": exc.__class__.__name__},
-            "vast_balance": supervisor.vast_balance_refresh_state(),
+            "ok": True,
+            "config": safe_config,
+            "login": {"username": (os.getenv("APP_USER", "gph").strip() or "gph"),
+                      "password_configured": bool(os.getenv("APP_PASSWORD", "")),
+                      "session_authenticated": session.get("gph_authenticated") is True},
+            "fx": get_usd_inr_rate(allow_network=False),
+            "live_blockers": safe_blockers,
+            "profiles_total": 0,
+            "profiles_enabled": 0,
+            "last_scan_at": None,
+            "last_scan_summary": {},
+            "offer_diagnostics": [],
+            "ui_progress": safe_progress,
+            "automation": {},
+            "vast_instance_snapshot": {},
             "kryptex": supervisor.cached_kryptex_status(),
+            "kryptex_gpu_market": {},
+            "opportunities": [],
+            "instances": [],
+            "summary": {},
+            "vast_balance": supervisor.vast_balance_refresh_state(),
+            "funding": {},
+            "events": [],
+            "database_status": {"available": False, "backend": db.backend, "snapshot": "unavailable",
+                                "error": "Dashboard database read is temporarily unavailable. Showing safe fallback data; retry shortly.",
+                                "error_type": exc.__class__.__name__},
             "setup_gaps": _safe_setup_gaps(),
-        }), 503
+            "degraded": True,
+        }), 200
 
 
 @app.post("/api/scan")
