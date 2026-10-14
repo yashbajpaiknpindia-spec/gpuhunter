@@ -14,7 +14,7 @@ from .config import Config, projected_commitment_hours, runtime_limit_reached
 from .db import Database, now_iso
 from .engine import OpportunityScanner, _algokey, _offer_safety_reasons
 from .monitor import RemoteMinerMonitor
-from .profiles import load_profiles, wallet_for_profile
+from .profiles import load_profiles, match_gpu_name, wallet_for_profile
 from .pool_metrics import PoolMetricsClient
 from .providers.vast import VastClient, VastAPIError, VastRateLimitError, format_duration
 from .providers.kryptex import KryptexPoolClient
@@ -423,8 +423,8 @@ class Supervisor:
         return max(0, min(configured, 25))
 
     def auto_rent_is_enabled(self, settings: dict[str, Any] | None = None) -> bool:
-        value = (settings or {}).get("auto_rent_enabled", self.config.auto_rent_enabled) if settings is not None else self.db.get_setting("auto_rent_enabled", self.config.auto_rent_enabled)
-        return bool(value)
+        """This deployment is intentionally manual-setup/monitor-only: never create rentals."""
+        return False
 
     def automation_state(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
@@ -436,7 +436,8 @@ class Supervisor:
             "target_active_instances": self.target_instances(settings=settings),
             "max_active_instances_cap": 25,
             "legacy_max_active_instances_setting": max(1, int(self.config.max_active_instances)),
-            "auto_rent_enabled": self.auto_rent_is_enabled(settings=settings),
+            "auto_rent_enabled": False,
+            "manual_setup_only": True,
             "live_mode": self.config.automation_mode == "live" and self.config.enable_live_mining,
         }
 
@@ -791,6 +792,157 @@ class Supervisor:
                 return profile
         return None
 
+    def adopt_manual_instance(self, instance_id: int, profile_id: str, coin_tag: str = "", algorithm: str = "") -> dict[str, Any]:
+        """Enroll one operator-created, currently running Vast instance for safety monitoring.
+
+        This method never starts or reconfigures a miner. Enrollment is explicit because
+        the monitor may permanently destroy the selected instance and its local disk.
+        """
+        if not self.config.vast_api_key:
+            raise RuntimeError("VAST_API_KEY is missing; the instance cannot be safely monitored")
+        if not self.config.ssh_private_key_path or not os.path.isfile(os.path.expanduser(self.config.ssh_private_key_path)):
+            raise RuntimeError("SSH_PRIVATE_KEY_PATH must point to an installed private key before enrolling a manual instance")
+
+        profile_id = str(profile_id or "").strip()
+        profiles = load_profiles(self.config.miner_profiles_path)
+        profile = next((p for p in profiles if str(p.get("id") or "").strip() == profile_id and p.get("enabled")), None)
+        if not profile:
+            raise RuntimeError("Choose an enabled monitoring profile from data/mining_profiles.json")
+        pool_cfg = profile.get("pool_metrics") if isinstance(profile.get("pool_metrics"), dict) else {}
+        if not (str(pool_cfg.get("url") or "").strip()
+                and str(pool_cfg.get("revenue_24h_usd_path") or "").strip()
+                and str(pool_cfg.get("source_updated_at_path") or "").strip()):
+            raise RuntimeError("The selected profile needs an HTTPS pool-metrics URL, current USD/day revenue path, and source_updated_at_path")
+        tags = [str(x).strip().upper() for x in profile.get("coin_tags", []) if str(x).strip()]
+        selected_coin = str(coin_tag or (tags[0] if len(tags) == 1 and tags[0] != "*" else "")).strip().upper()
+        if not selected_coin:
+            raise RuntimeError("A coin tag is required; use one coin and algorithm per monitoring profile or enter the coin tag")
+        if tags and "*" not in tags and selected_coin not in tags:
+            raise RuntimeError(f"Coin {selected_coin} is not allowed by the selected profile")
+        algos = [str(x).strip() for x in profile.get("algorithms", []) if str(x).strip()]
+        selected_algorithm = str(algorithm or (algos[0] if len(algos) == 1 and algos[0] != "*" else "")).strip()
+        if not selected_algorithm:
+            raise RuntimeError("An algorithm is required; use one coin and algorithm per monitoring profile or enter the algorithm")
+        if algos and "*" not in algos and _algokey(selected_algorithm) not in {_algokey(x) for x in algos}:
+            raise RuntimeError(f"Algorithm {selected_algorithm} is not allowed by the selected profile")
+
+        current_instances = self._current_instances()
+        provider_instance = None
+        for item in current_instances:
+            try:
+                current_id = int(item.get("id") or item.get("instance_id") or item.get("contract_id"))
+            except (TypeError, ValueError):
+                continue
+            if current_id == int(instance_id):
+                provider_instance = item
+                break
+        if provider_instance is None:
+            raise RuntimeError("That instance is not present in the latest live Vast listing; refresh and try again")
+        status = str(provider_instance.get("actual_status") or provider_instance.get("status") or "unknown").lower()
+        if status not in {"running", "active"}:
+            raise RuntimeError(f"Only a running instance can be enrolled; Vast currently reports {status}")
+        existing = self.db.get_managed_instance(int(instance_id))
+        if existing and str(existing.get("status") or "").lower() == "destroyed":
+            raise RuntimeError("Local history marks this instance destroyed; refusing to re-enroll a conflicting instance ID")
+        if existing:
+            existing_meta = self._metadata_dict(existing)
+            if existing_meta.get("manual_setup") and str(existing.get("miner_profile_id") or "") == profile_id:
+                return {"instance_id": int(instance_id), "already_monitored": True}
+            raise RuntimeError("This instance is already tracked. Do not reassign a running instance to another monitor profile.")
+
+        gpu_name = str(provider_instance.get("gpu_name") or provider_instance.get("gpu_name_display") or "Unknown GPU")
+        gpu_models = profile.get("gpu_models", ["*"]) or ["*"]
+        if "*" not in [str(x).strip() for x in gpu_models] and not any(match_gpu_name(gpu_name, str(x)) for x in gpu_models):
+            raise RuntimeError(f"Profile {profile_id} is not configured for this instance GPU ({gpu_name})")
+        hourly_rate = parse_num(provider_instance.get("dph_total"), parse_num(provider_instance.get("dph_base"), 0.0))
+        if hourly_rate <= 0:
+            raise RuntimeError("Vast did not report a positive current all-in hourly rate; profitability cannot be verified")
+
+        wallet = wallet_for_profile(profile, self.config.wallets_path)
+        if not wallet:
+            raise RuntimeError(f"Missing payout wallet for the selected profile wallet_key={profile.get('wallet_key')}")
+        worker = str(profile.get("worker") or "gph-worker").strip()
+        pool_report = self.pool_metrics.fetch(profile, wallet, worker, selected_coin)
+        pool_run_rate = parse_num(pool_report.get("revenue_24h_usd"), -1.0)
+        if pool_run_rate < 0:
+            raise RuntimeError("Pool API did not provide a valid current revenue run-rate; manual monitoring cannot be enabled")
+
+        opportunities = self.db.get_opportunities(limit=2000)
+        matching = [
+            row for row in opportunities
+            if bool(row.get("data_fresh"))
+            and str(row.get("coin_tag") or "").upper() == selected_coin
+            and _algokey(row.get("algorithm")) == _algokey(selected_algorithm)
+            and match_gpu_name(gpu_name, str(row.get("gpu_name") or ""))
+            and parse_num(row.get("gross_day_usd"), 0.0) > 0
+        ]
+        best = max(matching, key=lambda row: parse_num(row.get("conservative_gross_day_usd"), parse_num(row.get("gross_day_usd"), 0.0))) if matching else None
+        benchmark_rate = parse_num(profile.get("expected_hashrate_hs"), 0.0)
+        if benchmark_rate <= 0 and best:
+            benchmark_rate = parse_num(best.get("benchmark_hashrate_hs"), 0.0)
+        expected_gross = parse_num(best.get("gross_day_usd"), 0.0) if best else pool_run_rate
+        expected_gross = expected_gross if expected_gross > 0 else pool_run_rate
+        now = now_iso()
+        haircut = 1 - min(max(self.config.revenue_haircut, 0), 0.95)
+        conservative_gross = min(expected_gross, pool_run_rate) * haircut
+        fee_pct = parse_num(profile.get("miner_fee_pct"), self.config.default_miner_fee_pct) + parse_num(profile.get("pool_fee_pct"), self.config.default_pool_fee_pct)
+        after_fees = conservative_gross * max(0.0, 1.0 - fee_pct / 100.0)
+        cost_day = hourly_rate * 24 + self.config.bandwidth_reserve_usd_day
+        net_day = after_fees - cost_day
+        meta = {
+            "manual_setup": True,
+            "adopted_at": now,
+            "worker": worker,
+            "algorithm": selected_algorithm,
+            "last_profitability_scan_at": (best or {}).get("scanned_at") or now,
+            "latest_coin_data_updated_at": (best or {}).get("data_updated_at"),
+            "pool_metrics": pool_report,
+            "pool_metrics_error_count": 0,
+            "pool_revenue_missing_count": 0,
+            "monitor_fail_count": 0,
+            "initial_pool_run_rate_day_usd": pool_run_rate,
+            "initial_conservative_net_day_usd": net_day,
+        }
+        raw_offer_id = provider_instance.get("actual_offer_id") or provider_instance.get("offer_id")
+        try:
+            offer_id = int(raw_offer_id) if raw_offer_id is not None else None
+        except (TypeError, ValueError):
+            offer_id = None
+        managed = {
+            "instance_id": int(instance_id),
+            "offer_id": offer_id,
+            "opportunity_id": (best or {}).get("id"),
+            "coin_tag": selected_coin,
+            "gpu_name": gpu_name,
+            "hourly_cost": hourly_rate,
+            "expected_gross_day": expected_gross,
+            "benchmark_hashrate_hs": benchmark_rate,
+            "miner_profile_id": profile_id,
+            "started_at": now,
+            "last_monitor_at": now,
+            "observed_hashrate_hs": 0,
+            "observed_gpu_util": 0,
+            "observed_gpu_temp": 0,
+            "accepted_share_lines": 0,
+            "last_share_at": None,
+            "last_log": "",
+            "status": status,
+            "latest_gross_day": conservative_gross,
+            "latest_net_day": net_day,
+            "metadata_json": meta,
+        }
+        self.db.upsert_managed_instance(managed)
+        self.db.log("WARNING", "manual_instance_enrolled_for_monitoring", {
+            "instance_id": int(instance_id), "profile_id": profile_id, "coin_tag": selected_coin,
+            "algorithm": selected_algorithm, "hourly_cost_usd": hourly_rate,
+            "pool_run_rate_day_usd": pool_run_rate, "initial_conservative_net_day_usd": net_day,
+            "auto_destroy_enabled": True,
+        })
+        # Trigger an immediate first safety cycle; all normal background cycles continue
+        # independently, and no miner start/restart command is ever executed.
+        threading.Thread(target=self.monitor_once, name=f"gph-manual-adopt-{int(instance_id)}", daemon=True).start()
+        return {"instance_id": int(instance_id), "already_monitored": False, "initial_net_day_usd": round(net_day, 4)}
+
     def _current_instances(self) -> list[dict[str, Any]]:
         """Fetch a validated live fleet snapshot for monitoring and budget decisions.
 
@@ -966,6 +1118,7 @@ class Supervisor:
         return {"instance_id": instance_id, "vast_response": result}
 
     def rent_opportunity(self, opportunity_id: str) -> dict[str, Any]:
+        raise RuntimeError("GPU Profit Hunter is in manual-setup/monitor-only mode and will not create Vast rentals. Set up the instance in Vast and enroll it under Instances for safety monitoring.")
         self.set_ui_progress("Rent GPU", "Loading selected opportunity", 8, "Fetching the saved opportunity before live revalidation")
         item = self.db.get_opportunity(opportunity_id)
         if not item:
@@ -976,7 +1129,12 @@ class Supervisor:
         return self._rent(item, profile, "manual dashboard request", instance_limit=self.target_instances(), progress_callback=lambda stage, percent, detail: self.set_ui_progress("Rent GPU", stage, percent, detail))
 
     def auto_rent_to_target(self, progress_callback=None) -> list[dict[str, Any]]:
-        """Fill the selected target count with distinct, fully qualified opportunities."""
+        """Auto-rent is intentionally disabled for this manual-setup/monitor-only deployment."""
+        try:
+            self.db.log("INFO", "auto_rent_disabled_manual_setup_only", {})
+        except Exception:
+            pass
+        return []
         progress = progress_callback or (lambda stage, percent, detail: None)
         progress("Checking target and current rentals", 40, "Calculating available slots and existing spend commitments")
         if not (self.config.automation_mode == "live" and self.config.enable_live_mining and self.auto_rent_is_enabled()):
@@ -1174,9 +1332,12 @@ class Supervisor:
             else:
                 self.db.upsert_managed_instance(managed)
             return
-        meta_fresh = managed.get("metadata", {}) or {}
-        last_scan = _dt(meta_fresh.get("last_profitability_scan_at")) if isinstance(meta_fresh, dict) else None
-        if not last_scan or (datetime.now(timezone.utc) - last_scan).total_seconds() > self.config.max_profit_data_age_minutes * 60:
+        meta_fresh = self._metadata_dict(managed)
+        manual_setup = bool(meta_fresh.get("manual_setup"))
+        last_scan = _dt(meta_fresh.get("last_profitability_scan_at"))
+        # Operator-created instances use a timestamp-validated live pool feed every
+        # cycle, so scanner recency is not a prerequisite for manual monitoring.
+        if not manual_setup and (not last_scan or (datetime.now(timezone.utc) - last_scan).total_seconds() > self.config.max_profit_data_age_minutes * 60):
             self._destroy(instance_id, "Profitability data is stale; refusing to mine without recent market/reward rechecks")
             return
         profile = next((p for p in load_profiles(self.config.miner_profiles_path) if p.get("id") == managed.get("miner_profile_id")), None)
@@ -1198,7 +1359,8 @@ class Supervisor:
                 self.db.log("WARNING", "remote_monitor_retry", {"instance_id": instance_id, "attempt": fail_count, "error": str(exc)[:200]})
             return
 
-        meta = managed.get("metadata", {}) or {}
+        meta = self._metadata_dict(managed)
+        requires_pool_metrics = manual_setup or self.config.require_pool_metrics_for_live
         pool_report: dict[str, Any] | None = None
         pool_error = ""
         if (profile.get("pool_metrics") or {}).get("url") and (profile.get("pool_metrics") or {}).get("revenue_24h_usd_path"):
@@ -1218,13 +1380,13 @@ class Supervisor:
                 self.db.log("WARNING", "pool_metrics_fetch_failed", {
                     "instance_id": instance_id, "attempt": meta["pool_metrics_error_count"], "error": pool_error
                 })
-                if self.config.require_pool_metrics_for_live and runtime_hours * 60 > self.config.startup_grace_minutes:
+                if requires_pool_metrics and runtime_hours * 60 > self.config.startup_grace_minutes:
                     managed["metadata_json"] = meta
                     self.db.upsert_managed_instance(managed)
                     if meta["pool_metrics_error_count"] >= 3:
                         self._destroy(instance_id, "Required pool-reported run-rate telemetry failed repeatedly; refusing to keep paying without it")
                     return
-        elif self.config.require_pool_metrics_for_live:
+        elif requires_pool_metrics:
             self._destroy(instance_id, "Required pool metrics connector is missing at runtime")
             return
 
@@ -1232,7 +1394,7 @@ class Supervisor:
         # did not provide the explicitly configured current 24h gross-revenue field.
         # Do not silently fall back to a benchmark forever in live mode.
         pool_run_rate = parse_num((pool_report or {}).get("revenue_24h_usd"), -1.0)
-        if self.config.require_pool_metrics_for_live and runtime_hours * 60 > self.config.startup_grace_minutes:
+        if requires_pool_metrics and runtime_hours * 60 > self.config.startup_grace_minutes:
             if pool_run_rate < 0:
                 missing_count = int(meta.get("pool_revenue_missing_count", 0) or 0) + 1
                 meta["pool_revenue_missing_count"] = missing_count
@@ -1267,7 +1429,7 @@ class Supervisor:
         })
         # No observed hashrate or accepted share by startup deadline: destroy instead of paying blindly.
         if runtime_hours * 60 > self.config.startup_grace_minutes:
-            if bench_rate <= 0:
+            if bench_rate <= 0 and not manual_setup:
                 self.db.upsert_managed_instance(managed)
                 self._destroy(instance_id, "No positive benchmark hashrate is available for live profitability verification")
                 return
@@ -1279,16 +1441,22 @@ class Supervisor:
                 self.db.upsert_managed_instance(managed)
                 self._destroy(instance_id, "No accepted-share evidence after startup grace")
                 return
-        if bench_rate > 0 and hashrate > 0:
-            ratio = hashrate / bench_rate
-            if len(samples) >= 3:
+        if (bench_rate > 0 or manual_setup) and hashrate > 0 and (pool_run_rate >= 0 or not manual_setup):
+            # A manual instance can use the timestamp-validated live pool run-rate
+            # when no scanner benchmark exists for the user's independently set-up miner.
+            ratio = hashrate / bench_rate if bench_rate > 0 else 1.0
+            if bench_rate > 0 and len(samples) >= 3:
                 median_rate = statistics.median(samples[-3:])
                 median_ratio = median_rate / bench_rate
                 if median_ratio < self.config.min_observed_hashrate_ratio:
                     self.db.upsert_managed_instance(managed)
                     self._destroy(instance_id, f"Observed hashrate below guardrail ({median_ratio:.2f}x benchmark)")
                     return
-            gross = float(managed.get("expected_gross_day", 0) or 0)
+            gross = parse_num(managed.get("expected_gross_day"), 0.0)
+            if manual_setup and bench_rate <= 0:
+                gross = pool_run_rate
+            elif gross <= 0:
+                gross = pool_run_rate
             haircut = 1 - min(max(self.config.revenue_haircut, 0), 0.95)
             haircut_gross = gross * haircut * min(max(ratio, 0), 1.25)
             if pool_run_rate >= 0:
@@ -1475,7 +1643,7 @@ class Supervisor:
                 try:
                     self.scan()
                     next_scan_at = time.monotonic() + self.effective_scan_interval()
-                    self.auto_rent_to_target()
+                    # Automatic rental creation is disabled: scans never launch paid instances.
                 except VastRateLimitError as exc:
                     self._record_search_paused(exc)
                     next_scan_at = time.monotonic() + max(self.effective_scan_interval(), exc.retry_after)
