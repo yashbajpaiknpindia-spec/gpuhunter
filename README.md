@@ -2,6 +2,13 @@
 
 **Version:** 0.7.9 · **Run mode by default:** scanner only · **Live spending by default:** disabled
 
+## Profit-first scan and source freshness update
+
+- The broader Vast marketplace audit now defaults to **up to 500 offers once per audit interval** (`VAST_AUDIT_INTERVAL_SECONDS`, default 3600), rather than 40. The existing shared daily row budget and reserve remain in force; the scanner must stretch its schedule as needed rather than repeatedly spending the daily quota. If Render has an explicit `VAST_AUDIT_LIMIT=40`, change it to `500` to use the new coverage.
+- Each coin-level opportunity now displays the **maximum affordable all-in rental rate per hour**, calculated from the same conservative after-fee revenue used by the profit gate, including the revenue haircut, pool/miner fees, required minimum daily profit, bandwidth reserve and minimum revenue/cost ratio. It is a ceiling, not a guaranteed quote. Offers above it remain rejected.
+- The market table shows the revenue-estimate provider and its source timestamp where the provider supplies one. WhatToMine's documented GPU/coin calculation remains the generic GPU profitability benchmark. Kryptex's documented public Pool API provides pool/coin metadata and account/worker telemetry; account hashrate, balance and worker activity are **not** treated as universal GPU revenue estimates. The undocumented Kryptex per-GPU page endpoint remains disabled by default and is never silently trusted.
+- Candidate economics are forecasts, not realized payout. For a rented instance, the configured pool connector's observed 24-hour revenue run-rate is shown separately and should be used to confirm the actual miner is working. Missing or stale source data does not qualify a candidate for rental.
+
 GPU Profit Hunter is a local dashboard and conservative automation framework for comparing GPU-cloud rental offers against cryptocurrency-mining profitability estimates. It integrates:
 
 - **Vast.ai REST API**: search verified on-demand single-GPU offers, inspect instances, create an instance from a qualified offer, and destroy managed instances. Vast documents these endpoints in its [REST API guide](https://vast.ai/developers/api) and [instance-creation guide](https://docs.vast.ai/api-reference/creating-instances-with-api).
