@@ -69,7 +69,7 @@ def _optional_bool(value: Any) -> bool | None:
 def _offer_safety_reasons(offer: dict[str, Any], min_reliability: float) -> tuple[list[str], float, int, bool | None, bool | None]:
     """Assess an offer for display and live-rental safety, including unknown metadata."""
     stage = str(offer.get("_gph_search_stage") or "").lower()
-    strict_query_passed = stage == "strict"
+    strict_query_passed = stage in {"strict", "targeted"}
     reasons: list[str] = []
     gpu_count_raw = offer.get("num_gpus")
     gpu_count = int(parse_num(gpu_count_raw, 1 if strict_query_passed else 0))
@@ -197,6 +197,20 @@ class OpportunityScanner:
     def _run_vast_search(self, vast, plan, progress):
         provider_search: dict[str, Any]
         detailed_search = getattr(vast, "search_offers_with_diagnostics", None)
+        stored_catalog = self.db.get_setting("gpu_affordability_catalog", {}) or {}
+        catalog_updated = (
+            parse_iso_date(stored_catalog.get("updated_at"))
+            if isinstance(stored_catalog, dict) else None
+        )
+        catalog_age_seconds = (
+            (datetime.now(timezone.utc) - catalog_updated).total_seconds()
+            if catalog_updated else float("inf")
+        )
+        catalog_fresh = catalog_age_seconds <= max(1800, int(self.config.vast_audit_interval_seconds) * 2)
+        affordability_budgets = (
+            stored_catalog.get("models", [])
+            if plan.get("include_audit") and isinstance(stored_catalog, dict) and catalog_fresh else []
+        )
         if callable(detailed_search):
             provider_search = detailed_search(
                 limit=plan["strict_limit"], min_reliability=self.config.min_reliability,
@@ -205,6 +219,7 @@ class OpportunityScanner:
                 audit_skip_reason=plan["audit_skip_reason"],
                 order=self.config.vast_search_order,
                 max_total_hourly_usd=self.config.max_total_hourly_usd,
+                affordability_budgets=affordability_budgets,
             )
             offers = list(provider_search.get("offers") or [])
         else:
@@ -280,6 +295,22 @@ class OpportunityScanner:
         # deliberately not consumed here.
         kryptex_daily_index: dict[tuple[str, str, str], float] = {}
         kryptex_snapshot = self.db.get_setting("kryptex_gpu_market", {}) or {}
+        # The documented Kryptex Pool API provides a coin-price sample for the configured
+        # pool coin. Keep it as an independent live market reference, never as GPU revenue.
+        kryptex_account_snapshot = self.db.get_setting("kryptex_status", {}) or {}
+        kryptex_account_updated = parse_iso_date(kryptex_account_snapshot.get("updated_at")) if isinstance(kryptex_account_snapshot, dict) else None
+        kryptex_account_max_age = max(180, int(getattr(self.config, "kryptex_poll_interval_seconds", 60)) * 3)
+        kryptex_account_fresh = bool(
+            isinstance(kryptex_account_snapshot, dict)
+            and kryptex_account_updated
+            and (datetime.now(timezone.utc) - kryptex_account_updated).total_seconds() <= kryptex_account_max_age
+        )
+        kryptex_account_coin = str(kryptex_account_snapshot.get("coin") or "").upper() if isinstance(kryptex_account_snapshot, dict) else ""
+        kryptex_pool_coin_price = (
+            parse_num(kryptex_account_snapshot.get("coin_price_sample"), 0.0)
+            if kryptex_account_fresh and kryptex_account_snapshot.get("coin_price_available")
+            else None
+        )
         kryptex_snapshot_updated = parse_iso_date(kryptex_snapshot.get("updated_at")) if isinstance(kryptex_snapshot, dict) else None
         kryptex_max_age = max(180, int(getattr(self.config, "kryptex_gpu_scan_interval_seconds", 60)) * 3)
         kryptex_snapshot_fresh = bool(
@@ -448,6 +479,30 @@ class OpportunityScanner:
                     live_capability_ready=live_capability_ready,
                     additional_reasons=extra_reasons,
                 )
+                # Reverse the same conservative economics gates to tell the operator the
+                # maximum all-in Vast rate this GPU/coin pair could afford. This is a
+                # decision ceiling, not a quote: disk/bandwidth reserve, fees, haircut,
+                # required profit and revenue/cost ratio are all included.
+                after_fees_day = parse_num(p.get("after_fees_day_usd"), 0.0)
+                bandwidth_reserve = max(parse_num(self.config.bandwidth_reserve_usd_day, 0.0), 0.0)
+                required_net = max(parse_num(self.config.min_net_profit_usd_day, 0.0), 0.0)
+                required_ratio = max(parse_num(self.config.min_revenue_cost_ratio, 1.0), 0.01)
+                profit_limited_hourly = (after_fees_day - bandwidth_reserve - required_net) / 24.0
+                ratio_limited_hourly = (after_fees_day / required_ratio - bandwidth_reserve) / 24.0
+                daily_spend_limited_hourly = (
+                    max(parse_num(self.config.max_daily_spend_usd, 0.0) - bandwidth_reserve, 0.0) / 24.0
+                )
+                configured_total_cap = parse_num(self.config.max_total_hourly_usd, 0.0)
+                max_affordable_hourly = max(0.0, min(
+                    profit_limited_hourly, ratio_limited_hourly, daily_spend_limited_hourly,
+                    configured_total_cap if configured_total_cap > 0 else float("inf"),
+                ))
+                revenue_source = (
+                    "WhatToMine + Kryptex GPU reference"
+                    if kryptex_daily_revenue is not None
+                    else "WhatToMine GPU/coin calculation"
+                )
+                revenue_source_updated_at = row.get("last_update") or (coin_ref or {}).get("last_update")
                 if profile_reason:
                     p["reasons"].append(profile_reason)
                     p["qualified"] = False
@@ -474,8 +529,8 @@ class OpportunityScanner:
                     "total_hourly_usd": round(total_rate, 6),
                     "disk_hourly_usd": round(disk_rate, 6),
                     "reliability": round(reliability, 5),
-                    "verified": verified_status if verified_status is not None else (True if str(offer.get("_gph_search_stage") or "") == "strict" else False),
-                    "rentable": rentable_status if rentable_status is not None else (True if str(offer.get("_gph_search_stage") or "") == "strict" else False),
+                    "verified": verified_status if verified_status is not None else (True if str(offer.get("_gph_search_stage") or "") in {"strict", "targeted"} else False),
+                    "rentable": rentable_status if rentable_status is not None else (True if str(offer.get("_gph_search_stage") or "") in {"strict", "targeted"} else False),
                     "offer_safety_passed": not safety_reasons,
                     "search_stage": str(offer.get("_gph_search_stage") or provider_search.get("query_stage") or "unknown"),
                     "host_id": offer.get("host_id"),
@@ -484,7 +539,21 @@ class OpportunityScanner:
                     "gpu_count": normalized_gpu_count,
                     "data_fresh": is_fresh,
                     "data_freshness": freshness_label,
-                    "data_updated_at": row.get("last_update") or (coin_ref or {}).get("last_update"),
+                    "data_updated_at": revenue_source_updated_at,
+                    "revenue_source": revenue_source,
+                    "revenue_source_updated_at": revenue_source_updated_at,
+                    "max_affordable_total_hourly_usd": round(max_affordable_hourly, 6),
+                    "pool_account_data_note": "Kryptex public Pool API reports this configured account's workers/rewards; it is not a universal per-GPU benchmark.",
+                    "kryptex_pool_coin_price_usd": (
+                        round(kryptex_pool_coin_price, 8)
+                        if kryptex_pool_coin_price is not None and coin_tag.upper() == kryptex_account_coin
+                        else None
+                    ),
+                    "kryptex_pool_coin_price_updated_at": (
+                        kryptex_account_snapshot.get("updated_at")
+                        if kryptex_pool_coin_price is not None and coin_tag.upper() == kryptex_account_coin
+                        else None
+                    ),
                     "profile_id": profile.get("id") if profile else None,
                     "profile_available": profile_ready,
                     "pool_fee_pct": round(pool_fee, 3),
@@ -547,9 +616,42 @@ class OpportunityScanner:
             status_key = str(review.get("status") or "UNKNOWN")
             rejection_counts[status_key] = rejection_counts.get(status_key, 0) + 1
         self.db.set_setting("last_scan_offer_diagnostics", offer_diagnostics[:500])
+        # Feed the next quota-paced targeted search with fresh, observed GPU-name ceilings.
+        # These are learned from current WhatToMine calculations and local Vast prices; a
+        # broad audit remains enabled to discover models not represented in this catalog.
+        affordability_by_gpu: dict[str, dict[str, Any]] = {}
+        for item in opportunities:
+            if not item.get("data_fresh") or parse_num(item.get("gross_day_usd"), 0) <= 0:
+                continue
+            gpu_key = str(item.get("gpu_name") or "").strip()
+            cap = parse_num(item.get("max_affordable_total_hourly_usd"), 0)
+            if not gpu_key or cap <= 0:
+                continue
+            previous = affordability_by_gpu.get(gpu_key)
+            score = parse_num(item.get("expected_net_day_usd"), -1e9)
+            if previous is None or score > parse_num(previous.get("best_expected_net_day_usd"), -1e9):
+                affordability_by_gpu[gpu_key] = {
+                    "gpu_name": gpu_key,
+                    "max_total_hourly_usd": round(cap, 6),
+                    "coin_tag": item.get("coin_tag"),
+                    "best_expected_net_day_usd": round(score, 6),
+                    "source_updated_at": item.get("revenue_source_updated_at") or item.get("data_updated_at"),
+                }
+        next_catalog = sorted(
+            affordability_by_gpu.values(),
+            key=lambda x: parse_num(x.get("best_expected_net_day_usd"), -1e9),
+            reverse=True,
+        )[:6]
+        if next_catalog:
+            self.db.set_setting("gpu_affordability_catalog", {
+                "updated_at": scanned_at,
+                "models": next_catalog,
+                "method": "fresh provider estimate + conservative profit gates",
+            })
         self.db.log("INFO", "market_scan_completed", {
             "offers_seen": len(offers), "strict_count": provider_search.get("strict_count", len(offers)),
             "fallback_count": provider_search.get("fallback_count", 0),
+            "targeted_count": provider_search.get("targeted_count", 0),
             "get_fallback_count": provider_search.get("get_fallback_count", 0),
             "query_stage": provider_search.get("query_stage"),
             "benchmark_gpus": len(gpus), "coin_rows": len(coins),

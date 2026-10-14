@@ -260,8 +260,9 @@ class VastClient:
         audit_skip_reason: str = "",
         order: str | None = None,
         max_total_hourly_usd: float = 0.0,
+        affordability_budgets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Run the strict candidate query and, when allowed, a small broad audit query.
+        """Run a strict low-cost query and a quota-paced broad marketplace audit.
 
         Vast bills searches by *rows returned* against a daily quota, so every row requested
         here has a cost. The strict query finds offers that meet provider-side live filters
@@ -340,18 +341,62 @@ class VastClient:
         report("Preferred Vast search finished", 15,
                f"{len(strict_offers)} preferred offers" + (f" (search problem: {strict_error[:120]})" if strict_error else ""))
 
+        targeted_offers: list[dict[str, Any]] = []
+        targeted_errors: list[str] = []
+        rate_limit: dict[str, Any] | None = None
+        targeted_budgets = affordability_budgets if isinstance(affordability_budgets, list) else []
+        # Use previously measured conservative per-model economics to ask Vast for the exact
+        # GPU models at or below their affordable all-in rate. This targeted pass runs only
+        # alongside the quota-paced broad audit; current local economics are recalculated later.
+        if include_audit and not strict_error and targeted_budgets:
+            for budget_row in targeted_budgets[:6]:
+                if not isinstance(budget_row, dict):
+                    continue
+                model = str(budget_row.get("gpu_name") or "").strip()
+                try:
+                    cap = float(budget_row.get("max_total_hourly_usd") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not model or cap <= 0:
+                    continue
+                if max_total_hourly_usd and max_total_hourly_usd > 0:
+                    cap = min(cap, float(max_total_hourly_usd))
+                targeted_query = {
+                    "gpu_name": {"in": [model]},
+                    "num_gpus": {"eq": 1},
+                    "verified": {"eq": True},
+                    "rentable": {"eq": True},
+                    "reliability": {"gte": min_reliability},
+                    "type": "ondemand",
+                    "dph_total": {"lte": cap},
+                    "limit": 10,
+                }
+                try:
+                    rows, _ = search(targeted_query, True)
+                    for row in rows:
+                        tagged = dict(row)
+                        tagged["_gph_search_stage"] = "targeted"
+                        tagged["_gph_affordability_cap_usd_h"] = round(cap, 6)
+                        tagged["_gph_target_gpu_name"] = model
+                        targeted_offers.append(tagged)
+                except VastRateLimitError as exc:
+                    targeted_errors.append(safe_error(exc))
+                    rate_limit = {"retry_after": exc.retry_after, "quota": exc.quota, "limit": exc.limit, "remaining": exc.remaining}
+                    break
+                except Exception as exc:
+                    targeted_errors.append(f"{model}: {safe_error(exc)}")
+
         fallback_offers: list[dict[str, Any]] = []
         fallback_keys: list[str] = []
         fallback_error = ""
         audit_ran = False
-        rate_limit: dict[str, Any] | None = None
         if include_audit and strict_error:
             audit_skip_reason = "the preferred query failed, so a second query would likely fail too"
             include_audit = False
         if include_audit:
-            # A broad query keeps low-reliability / unverified / multi-GPU offers visible with local
-            # rejection reasons, so one valid strict offer cannot mask them. It is capped separately
-            # (and skippable) because it is the least valuable use of the daily row quota.
+            # A broad query is the discovery net: it exposes cheaper/unusual GPU models and offers
+            # filtered by the strict server-side predicates. The hourly audit interval and shared
+            # daily row budget limit quota use; all offers are rechecked locally before any rental.
             report("Auditing broader Vast market", 16, f"Checking up to {safe_audit_limit} wider on-demand offers to explain filtered or uncertain offers")
             audit_ran = True
             fallback_query = {"num_gpus": {"gte": 1}, "type": "ondemand", "limit": safe_audit_limit}
@@ -387,6 +432,16 @@ class VastClient:
             else:
                 merged[key].update(row)
                 merged[key]["_gph_search_stage"] = "fallback"
+        for position, offer in enumerate(targeted_offers, start=1):
+            key = key_for(offer, position, "targeted")
+            row = dict(offer)
+            row["_gph_search_stage"] = "targeted"
+            if key not in merged:
+                merged[key] = row
+                order.append(key)
+            else:
+                merged[key].update(row)
+                merged[key]["_gph_search_stage"] = "targeted"
         for position, offer in enumerate(strict_offers, start=1):
             key = key_for(offer, position, "strict")
             row = dict(offer)
@@ -425,8 +480,9 @@ class VastClient:
             )
         elif fallback_offers:
             diagnostic = (
-                f"Strict GET returned {len(strict_offers)} rows; broad fallback GET returned {len(fallback_offers)} rows; "
-                f"{len(offers)} unique offers retained for the audit (duplicates merged). Broad-only offers "
+                f"Strict GET returned {len(strict_offers)} rows; affordability-targeted GET returned {len(targeted_offers)} rows; "
+                f"broad fallback GET returned {len(fallback_offers)} rows; {len(offers)} unique offers retained (duplicates merged). "
+                "Broad-only offers "
                 "are reviewed locally and cannot rent unless one-GPU, verification, rentability and reliability checks pass."
             )
         elif offers:
@@ -443,21 +499,24 @@ class VastClient:
         request_errors = []
         if strict_error:
             request_errors.append(f"Strict GET error: {strict_error}")
+        if targeted_errors:
+            request_errors.append("Targeted affordability search errors: " + "; ".join(targeted_errors[:3]))
         if fallback_error:
             request_errors.append(f"Broad GET error: {fallback_error}")
         if request_errors:
             diagnostic += " " + " ".join(request_errors)
 
-        query_stage = "combined" if strict_offers and fallback_offers else (
-            "strict" if strict_offers else ("fallback" if fallback_offers else "empty")
+        query_stage = "combined" if (strict_offers or targeted_offers) and fallback_offers else (
+            "strict" if strict_offers else ("targeted" if targeted_offers else ("fallback" if fallback_offers else "empty"))
         )
         return {
             "offers": offers,
             "raw_count": len(offers),
             "strict_count": len(strict_offers),
+            "targeted_count": len(targeted_offers),
             "fallback_count": len(fallback_offers),
             # Rows Vast returned for this scan; this is what counts against the daily search quota.
-            "rows_returned": len(strict_offers) + len(fallback_offers),
+            "rows_returned": len(strict_offers) + len(targeted_offers) + len(fallback_offers),
             "strict_limit": safe_limit,
             "audit_limit": safe_audit_limit if audit_ran else 0,
             "audit_ran": audit_ran,
