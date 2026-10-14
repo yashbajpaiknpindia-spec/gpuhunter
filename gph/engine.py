@@ -286,6 +286,22 @@ class OpportunityScanner:
         # deliberately not consumed here.
         kryptex_daily_index: dict[tuple[str, str, str], float] = {}
         kryptex_snapshot = self.db.get_setting("kryptex_gpu_market", {}) or {}
+        # The documented Kryptex Pool API provides a coin-price sample for the configured
+        # pool coin. Keep it as an independent live market reference, never as GPU revenue.
+        kryptex_account_snapshot = self.db.get_setting("kryptex_status", {}) or {}
+        kryptex_account_updated = parse_iso_date(kryptex_account_snapshot.get("updated_at")) if isinstance(kryptex_account_snapshot, dict) else None
+        kryptex_account_max_age = max(180, int(getattr(self.config, "kryptex_poll_interval_seconds", 60)) * 3)
+        kryptex_account_fresh = bool(
+            isinstance(kryptex_account_snapshot, dict)
+            and kryptex_account_updated
+            and (datetime.now(timezone.utc) - kryptex_account_updated).total_seconds() <= kryptex_account_max_age
+        )
+        kryptex_account_coin = str(kryptex_account_snapshot.get("coin") or "").upper() if isinstance(kryptex_account_snapshot, dict) else ""
+        kryptex_pool_coin_price = (
+            parse_num(kryptex_account_snapshot.get("coin_price_sample"), 0.0)
+            if kryptex_account_fresh and kryptex_account_snapshot.get("coin_price_available")
+            else None
+        )
         kryptex_snapshot_updated = parse_iso_date(kryptex_snapshot.get("updated_at")) if isinstance(kryptex_snapshot, dict) else None
         kryptex_max_age = max(180, int(getattr(self.config, "kryptex_gpu_scan_interval_seconds", 60)) * 3)
         kryptex_snapshot_fresh = bool(
@@ -519,6 +535,16 @@ class OpportunityScanner:
                     "revenue_source_updated_at": revenue_source_updated_at,
                     "max_affordable_total_hourly_usd": round(max_affordable_hourly, 6),
                     "pool_account_data_note": "Kryptex public Pool API reports this configured account's workers/rewards; it is not a universal per-GPU benchmark.",
+                    "kryptex_pool_coin_price_usd": (
+                        round(kryptex_pool_coin_price, 8)
+                        if kryptex_pool_coin_price is not None and coin_tag.upper() == kryptex_account_coin
+                        else None
+                    ),
+                    "kryptex_pool_coin_price_updated_at": (
+                        kryptex_account_snapshot.get("updated_at")
+                        if kryptex_pool_coin_price is not None and coin_tag.upper() == kryptex_account_coin
+                        else None
+                    ),
                     "profile_id": profile.get("id") if profile else None,
                     "profile_available": profile_ready,
                     "pool_fee_pct": round(pool_fee, 3),
