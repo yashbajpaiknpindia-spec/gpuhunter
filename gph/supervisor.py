@@ -1290,10 +1290,31 @@ class Supervisor:
             net_day = after_fees - cost_day
             managed["latest_gross_day"] = haircut_gross
             managed["latest_net_day"] = net_day
+            meta["profitability_check_at"] = now_iso()
+            meta["live_rent_cost_day_usd"] = cost_day
+            meta["conservative_after_fees_day_usd"] = after_fees
+            meta["pool_run_rate_day_usd"] = pool_run_rate if pool_run_rate >= 0 else None
+            # Forecast safety gate: a current rate drop is reflected immediately through the
+            # lower pool run-rate, and the lower of pool and benchmark estimates is used.
             if net_day < self.config.min_net_profit_usd_day or (cost_day > 0 and after_fees / cost_day < self.config.min_revenue_cost_ratio):
+                managed["metadata_json"] = meta
                 self.db.upsert_managed_instance(managed)
-                self._destroy(instance_id, f"Live hashrate-adjusted conservative net forecast failed: ${net_day:.3f}/day")
+                self._destroy(instance_id, f"Live conservative net forecast failed: ${net_day:.3f}/day after current rent and reserves")
                 return
+            # If the pool explicitly exposes realized trailing-24h earnings, use them as a
+            # second independent check after a full day of runtime. Never compare a partial
+            # startup period against a full day's rent cost.
+            realized_24h = parse_num((pool_report or {}).get("realized_revenue_24h_usd"), -1.0)
+            if runtime_hours >= 24 and realized_24h >= 0:
+                realized_net_24h = realized_24h * max(0, 1 - (miner_fee_pct + pool_fee_pct) / 100) - cost_day
+                managed["latest_realized_net_24h"] = realized_net_24h
+                meta["realized_revenue_24h_usd"] = realized_24h
+                meta["realized_net_24h_usd"] = realized_net_24h
+                if realized_net_24h < self.config.min_net_profit_usd_day or (cost_day > 0 and (realized_24h * max(0, 1 - (miner_fee_pct + pool_fee_pct) / 100)) / cost_day < self.config.min_revenue_cost_ratio):
+                    managed["metadata_json"] = meta
+                    self.db.upsert_managed_instance(managed)
+                    self._destroy(instance_id, f"Realized trailing-24h profitability failed: ${realized_net_24h:.3f}/day net")
+                    return
         # Stale accepted shares cause a fail-safe destroy only after startup and if configured.
         share_dt = _dt(last_share)
         if share_dt and (datetime.now(timezone.utc) - share_dt).total_seconds() > self.config.max_no_share_minutes * 60:
