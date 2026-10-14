@@ -198,9 +198,18 @@ class OpportunityScanner:
         provider_search: dict[str, Any]
         detailed_search = getattr(vast, "search_offers_with_diagnostics", None)
         stored_catalog = self.db.get_setting("gpu_affordability_catalog", {}) or {}
+        catalog_updated = (
+            parse_iso_date(stored_catalog.get("updated_at"))
+            if isinstance(stored_catalog, dict) else None
+        )
+        catalog_age_seconds = (
+            (datetime.now(timezone.utc) - catalog_updated).total_seconds()
+            if catalog_updated else float("inf")
+        )
+        catalog_fresh = catalog_age_seconds <= max(1800, int(self.config.vast_audit_interval_seconds) * 2)
         affordability_budgets = (
             stored_catalog.get("models", [])
-            if plan.get("include_audit") and isinstance(stored_catalog, dict) else []
+            if plan.get("include_audit") and isinstance(stored_catalog, dict) and catalog_fresh else []
         )
         if callable(detailed_search):
             provider_search = detailed_search(
