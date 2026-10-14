@@ -143,7 +143,7 @@ class Database:
         return conn
 
     @contextmanager
-    def session(self):
+    def session(self, timeout: float | None = None):
         if self.is_postgres and self._pool is not None:
             # psycopg_pool's connection context owns commit/rollback and discards a
             # connection that fails health checks. Do not duplicate rollback here:
@@ -151,7 +151,7 @@ class Database:
             # OperationalError, as seen in the Render traceback. Always let the pool
             # clean up the connection exactly once.
             try:
-                with self._pool.connection(timeout=self.checkout_timeout) as raw_conn:
+                with self._pool.connection(timeout=self.checkout_timeout if timeout is None else max(0.1, float(timeout))) as raw_conn:
                     yield _PostgresConnection(raw_conn)
             except Exception as exc:
                 if isinstance(exc, TimeoutError) or exc.__class__.__name__ == "PoolTimeout":
@@ -310,7 +310,12 @@ class Database:
         """
         for attempt in range(2):
             try:
-                with self.session() as conn:
+                with self.session(timeout=3) as conn:
+                    # Prevent cross-region/network or lock delays from pinning a web worker.
+                    # This is a read-only dashboard snapshot; it must fail quickly and let
+                    # /api/state serve a clearly marked degraded response rather than stall.
+                    conn.execute("SET LOCAL statement_timeout = '5000ms'")
+                    conn.execute("SET LOCAL lock_timeout = '1500ms'")
                     # Bound this read defensively: legacy deployments may have accumulated
                     # rows before the table became a current-scan snapshot. Rank a recent
                     # window rather than keeping a pool checkout open for an unbounded fetch.
