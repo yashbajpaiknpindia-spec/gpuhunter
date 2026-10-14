@@ -230,6 +230,30 @@ def logout():
     return redirect(url_for("login", logged_out="1"))
 
 
+def _public_monitor_profiles(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expose only non-secret profile metadata needed by the manual-enrollment UI."""
+    result = []
+    for profile in profiles:
+        if not profile.get("enabled") or not str(profile.get("id") or "").strip():
+            continue
+        pool = profile.get("pool_metrics") if isinstance(profile.get("pool_metrics"), dict) else {}
+        result.append({
+            "id": str(profile.get("id"))[:80],
+            "label": str(profile.get("name") or profile.get("id") or "Mining profile")[:100],
+            "coin_tags": [str(x).strip().upper() for x in profile.get("coin_tags", []) if str(x).strip()],
+            "algorithms": [str(x).strip() for x in profile.get("algorithms", []) if str(x).strip()],
+            "gpu_models": [str(x).strip() for x in (profile.get("gpu_models", ["*"]) or ["*"]) if str(x).strip()],
+            "expected_hashrate_hs": parse_num(profile.get("expected_hashrate_hs"), 0.0),
+            "pool_metrics_ready": bool(
+                str(pool.get("url") or "").strip()
+                and str(pool.get("revenue_24h_usd_path") or "").strip()
+                and str(pool.get("source_updated_at_path") or "").strip()
+            ),
+            "pool_metrics_name": str(pool.get("name") or pool.get("provider") or "")[:100],
+        })
+    return result
+
+
 def _managed_lookup(managed_rows: list[dict[str, Any]] | None = None) -> dict[int, dict[str, Any]]:
     rows = managed_rows if managed_rows is not None else db.get_managed_instances()
     return {int(x["instance_id"]): x for x in rows}
@@ -266,6 +290,7 @@ def _instances_for_ui(snapshot: dict[str, Any] | None = None, managed_rows: list
             "status": status,
             "hourly_cost_usd": round(parse_num(x.get("dph_total"), parse_num(x.get("dph_base"), parse_num((m or {}).get("hourly_cost"), 0))), 5),
             "managed_by_gph": bool(m),
+            "manual_setup": bool(metadata.get("manual_setup")),
             "coin_tag": (m or {}).get("coin_tag"),
             "expected_net_day_usd": (m or {}).get("latest_net_day"),
             "conservative_gross_day_usd": (m or {}).get("latest_gross_day"),
@@ -302,7 +327,7 @@ def _instances_for_ui(snapshot: dict[str, Any] | None = None, managed_rows: list
         result.append({
             "instance_id": iid, "gpu_name": m.get("gpu_name") or "Unknown GPU",
             "status": m.get("status") or "missing_from_vast", "hourly_cost_usd": float(m.get("hourly_cost") or 0),
-            "managed_by_gph": True, "coin_tag": m.get("coin_tag"),
+            "managed_by_gph": True, "manual_setup": bool(metadata.get("manual_setup")), "coin_tag": m.get("coin_tag"),
             "expected_net_day_usd": m.get("latest_net_day"), "conservative_gross_day_usd": m.get("latest_gross_day"),
             "observed_hashrate_hs": m.get("observed_hashrate_hs", 0), "gpu_util": m.get("observed_gpu_util", 0),
             "gpu_temp": m.get("observed_gpu_temp", 0), "accepted_share_lines": m.get("accepted_share_lines", 0),
@@ -547,6 +572,8 @@ def state():
             "live_blockers": blockers,
             "profiles_total": len(profiles),
             "profiles_enabled": sum(bool(p.get("enabled")) for p in profiles),
+            "monitor_profiles": _public_monitor_profiles(profiles),
+            "manual_setup_only": True,
             "last_scan_at": settings.get("last_scan_at"),
             "last_scan_summary": settings.get("last_scan_summary", {}),
             "offer_diagnostics": settings.get("last_scan_offer_diagnostics", []) or [],
@@ -633,6 +660,8 @@ def state():
             "live_blockers": safe_blockers,
             "profiles_total": 0,
             "profiles_enabled": 0,
+            "monitor_profiles": _public_monitor_profiles(load_profiles(config.miner_profiles_path)),
+            "manual_setup_only": True,
             "last_scan_at": None,
             "last_scan_summary": {},
             "offer_diagnostics": [],
@@ -699,40 +728,18 @@ def automation_settings():
     cap = 25
     if target < 0 or target > cap:
         return jsonify({"ok": False, "error": f"Choose a whole number from 0 to {cap} instances."}), 400
-    auto_rent = bool(data.get("auto_rent_enabled", supervisor.auto_rent_is_enabled()))
+    auto_rent = bool(data.get("auto_rent_enabled", False))
     if auto_rent:
-        blockers = supervisor.live_blockers()
-        if blockers:
-            return jsonify({"ok": False, "error": "Auto-deploy remains blocked: " + "; ".join(blockers)}), 400
-        if target < 1:
-            return jsonify({"ok": False, "error": "Set a target of at least 1 before enabling auto-deploy."}), 400
+        return jsonify({"ok": False, "error": "Auto-rent is disabled in manual-setup/monitor-only mode. Create and start instances directly in Vast, then enroll only the instances you want monitored."}), 403
     db.set_setting("target_active_instances", target)
-    db.set_setting("auto_rent_enabled", auto_rent)
-    db.log("WARNING" if auto_rent else "INFO", "automation_settings_changed", {"target_active_instances": target, "auto_rent_enabled": auto_rent})
-    return jsonify({"ok": True, "automation": supervisor.automation_state(), "message": "Automation settings saved. Auto-deploy only runs if live mode and all safety gates are configured."})
+    db.set_setting("auto_rent_enabled", False)
+    db.log("INFO", "automation_settings_changed", {"target_active_instances": target, "auto_rent_enabled": False, "manual_setup_only": True})
+    return jsonify({"ok": True, "automation": supervisor.automation_state(), "message": "Target saved for display only. GPU Profit Hunter will not create or start Vast rentals."})
 
 
 @app.post("/api/deploy-target")
 def deploy_target():
-    supervisor.set_ui_progress("Deploy target", "Checking deployment permission", 5, "Checking auto-deploy setting and live safety blockers")
-    if not supervisor.auto_rent_is_enabled():
-        message = "Auto-deploy is not enabled. Save the target and enable auto-deploy only after completing all live setup gates."
-        supervisor.set_ui_progress("Deploy target", "Blocked", 100, message, "failed")
-        return jsonify({"ok": False, "error": message}), 400
-    blockers = supervisor.live_blockers()
-    if blockers:
-        message = "Deployment blocked: " + "; ".join(blockers)
-        supervisor.set_ui_progress("Deploy target", "Blocked by safety gates", 100, message, "failed")
-        return jsonify({"ok": False, "error": message}), 400
-    try:
-        supervisor.set_ui_progress("Deploy target", "Evaluating eligible opportunities", 35, "Checking current candidates, active instance count and spend caps")
-        created = supervisor.auto_rent_to_target(progress_callback=lambda stage, percent, detail: supervisor.set_ui_progress("Deploy target", stage, percent, detail))
-        supervisor.set_ui_progress("Deploy target", "Complete", 100, f"{len(created)} rental request(s) returned by the deployment evaluator", "complete")
-        return jsonify({"ok": True, "created": created, "count": len(created), "message": f"Deployment check completed: {len(created)} new rental(s) requested. Any unfilled slots did not have a candidate passing all checks."})
-    except Exception as exc:
-        db.log("ERROR", "deploy_target_failed", {"error": str(exc)[:300]})
-        supervisor.set_ui_progress("Deploy target", "Failed", 100, str(exc)[:240], "failed")
-        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": False, "error": "Automatic deployment is disabled. Create and configure your Vast instance manually, then enroll it from the Instances page for monitoring."}), 403
 
 
 @app.post("/api/kryptex/configure")
@@ -769,19 +776,37 @@ def kryptex_status():
 
 @app.post("/api/rent")
 def rent():
+    return jsonify({"ok": False, "error": "GPU Profit Hunter is in manual-setup/monitor-only mode and will not create Vast rentals. Set up the instance in Vast and enroll it under Instances for safety monitoring."}), 403
+
+
+@app.post("/api/monitor/adopt/<int:instance_id>")
+def adopt_manual_instance(instance_id: int):
+    """Explicitly enroll a single operator-created instance; enrolled instances may be destroyed by safety rules."""
     data = request.get_json(silent=True) or {}
-    opportunity_id = str(data.get("opportunity_id", "")).strip()
-    if not opportunity_id:
-        return jsonify({"ok": False, "error": "opportunity_id is required"}), 400
+    if data.get("confirm") is not True:
+        return jsonify({"ok": False, "error": "Explicit confirmation is required because automatic safety actions may permanently destroy this instance and its disk."}), 400
+    profile_id = str(data.get("profile_id") or "").strip()
+    if not profile_id:
+        return jsonify({"ok": False, "error": "profile_id is required"}), 400
     try:
-        supervisor.set_ui_progress("Rent GPU", "Starting server-side revalidation", 10, "The server rechecks the selected saved opportunity and its live gates")
-        result = supervisor.rent_opportunity(opportunity_id)
-        supervisor.set_ui_progress("Rent GPU", "Request completed", 100, "Rental request returned; refresh the Instances page to verify provider status", "complete")
-        return jsonify({"ok": True, "result": result, "message": "Instance creation requested. It will be monitored and terminated if safety conditions fail."})
+        result = supervisor.adopt_manual_instance(
+            instance_id,
+            profile_id=profile_id,
+            coin_tag=str(data.get("coin_tag") or ""),
+            algorithm=str(data.get("algorithm") or ""),
+        )
+        message = (
+            "This instance is already enrolled and remains under monitoring."
+            if result.get("already_monitored")
+            else "Manual instance enrolled. GPU Profit Hunter will not start or reconfigure its miner; it will monitor profitability and may permanently destroy this instance and its disk when safety gates fail."
+        )
+        return jsonify({"ok": True, "result": result, "message": message}), 202
     except Exception as exc:
-        db.log("WARNING", "manual_rent_rejected", {"opportunity_id": opportunity_id, "error": str(exc)[:300]})
-        supervisor.set_ui_progress("Rent GPU", "Blocked or failed", 100, str(exc)[:240], "failed")
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        try:
+            db.log("WARNING", "manual_instance_enrollment_rejected", {"instance_id": instance_id, "profile_id": profile_id, "error": str(exc)[:260]})
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": str(exc)[:260]}), 400
 
 
 @app.post("/api/destroy/<int:instance_id>")
@@ -809,8 +834,9 @@ def destroy(instance_id: int):
 
 @app.post("/api/monitor")
 def monitor():
-    if not (config.automation_mode == "live" and config.enable_live_mining):
-        return jsonify({"ok": False, "error": "Live monitoring is off. Enable live monitoring only after completing setup and risk checks."}), 400
+    if not config.vast_api_key:
+        return jsonify({"ok": False, "error": "VAST_API_KEY is not configured; monitoring is unavailable."}), 400
+    # Monitoring an explicitly enrolled instance does not start mining or create spend.
     return jsonify({"ok": True, **supervisor.monitor_once()})
 
 
