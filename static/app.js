@@ -151,7 +151,10 @@ function renderAffordabilityCatalogue(catalog, kryptex){
   const models=Array.isArray(catalog?.models)?catalog.models:[];
   const poolCoin=String(kryptex?.coin||'').toUpperCase();
   const poolPrice=Number(kryptex?.coin_price_sample);
-  const poolPriceFresh=Boolean(kryptex?.coin_price_available&&poolCoin===String(catalog?.coin_tag||'PRL').toUpperCase()&&Number.isFinite(poolPrice)&&poolPrice>0);
+  const poolUpdated=Date.parse(kryptex?.updated_at||'');
+  const poolAgeMs=Number.isFinite(poolUpdated)?Date.now()-poolUpdated:Infinity;
+  const poolMaxAgeMs=Math.max(180000,Number(appState?.config?.kryptex_poll_interval_seconds||60)*3000);
+  const poolPriceFresh=Boolean(kryptex?.coin_price_available&&poolCoin===String(catalog?.coin_tag||'PRL').toUpperCase()&&Number.isFinite(poolPrice)&&poolPrice>0&&poolAgeMs>=-60000&&poolAgeMs<=poolMaxAgeMs);
   const poolPriceCell=poolPriceFresh?`${currency(poolPrice,8)} <div class="sub-cell">${esc(kryptex.updated_at||'timestamp unavailable')} · reference only</div>`:'Unavailable / stale';
   if(!models.length){table.innerHTML='<tr><td colspan="6" class="empty-cell">No fresh positive-affordability models. If WhatToMine has no current PRL benchmark, GPU Hunter will not invent revenue or rent a GPU.</td></tr>';return;}
   table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${poolPriceCell}</td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}<div class="sub-cell">${esc(m.source||catalog.source||'Benchmark source')}</div></td></tr>`).join('');
