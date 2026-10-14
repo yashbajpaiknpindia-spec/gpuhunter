@@ -42,7 +42,7 @@ async function runUiTask(action, button, fn, startDetail='Sending request to the
   scanButtons.forEach(b=>{if(b&&b!==button){b.disabled=true;b.dataset.taskLock='1';}});
   taskStartedAt=Date.now(); taskHistory=[]; showTask(action,'Starting',startDetail,3,'running');
   if(progressPollHandle) clearInterval(progressPollHandle);
-  progressPollHandle=setInterval(pollServerProgress,700);
+  progressPollHandle=setInterval(pollServerProgress,1500);
   try { showTask(action,'Request sent','Waiting for the server response; no completion is assumed yet.',8,'running'); await fn(); }
   catch(err){ showTask(action,'Action failed',err?.message||'Unexpected error',100,'failed'); throw err; }
   finally { if(button){button.disabled=false;button.innerHTML=old;delete button.dataset.busy;} scanButtons.forEach(b=>{if(b&&b!==button&&b.dataset.taskLock){b.disabled=false;delete b.dataset.taskLock;}}); await pollServerProgress(); if(progressPollHandle){clearInterval(progressPollHandle);progressPollHandle=null;} activeUiTask=null; }
@@ -323,9 +323,9 @@ async function refreshVastBalance(){
   try{
     const started=await api('/api/vast/balance/refresh',{method:'POST',body:JSON.stringify({})});
     let status=started.vast_balance||{};
-    const deadline=Date.now()+10000;
+    const deadline=Date.now()+15000;
     while(status.refreshing && Date.now()<deadline){
-      await new Promise(resolve=>setTimeout(resolve,350));
+      await new Promise(resolve=>setTimeout(resolve,1000));
       const current=await api('/api/vast/balance/status'); status=current.vast_balance||status;
     }
     // Render the provider result before reloading the PostgreSQL-backed dashboard.
@@ -493,19 +493,31 @@ function renderFinance(state){
   ensureVastBalanceChecked(b);
 }
 async function api(url,opts={}){
-  const response=await fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});
-  const contentType=response.headers.get('content-type')||'unknown content type';
-  const raw=await response.text();
-  let data={};
-  try { data=raw?JSON.parse(raw):{}; }
-  catch(_){
-    const hint=raw.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
-    const detail=hint?` Server response: ${hint}`:'';
-    throw new Error(`HTTP ${response.status} returned ${contentType}, not JSON. This may be an application error or Render proxy/restart response.${detail}`);
-  }
-  if(response.status===401 && data.login_url){ window.location.assign(data.login_url); throw new Error(data.error||'Please sign in again.'); }
-  if(!response.ok||data.ok===false) throw new Error(data.error||`Request failed (${response.status})`);
-  return data;
+  // Bound every dashboard request. A fetch with no deadline can leave wallet/progress
+  // controls showing "Checking…" forever when a Gunicorn thread or database read stalls.
+  const controller=new AbortController();
+  const timeoutMs=Number(opts.timeoutMs)||12000;
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  const requestOpts={...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})},signal:opts.signal||controller.signal};
+  delete requestOpts.timeoutMs;
+  try {
+    const response=await fetch(url,requestOpts);
+    const contentType=response.headers.get('content-type')||'unknown content type';
+    const raw=await response.text();
+    let data={};
+    try { data=raw?JSON.parse(raw):{}; }
+    catch(_){
+      const hint=raw.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
+      const detail=hint?` Server response: ${hint}`:'';
+      throw new Error(`HTTP ${response.status} returned ${contentType}, not JSON. This may be an application error or Render proxy/restart response.${detail}`);
+    }
+    if(response.status===401 && data.login_url){ window.location.assign(data.login_url); throw new Error(data.error||'Please sign in again.'); }
+    if(!response.ok||data.ok===false) throw new Error(data.error||`Request failed (${response.status})`);
+    return data;
+  } catch(err) {
+    if(err?.name==='AbortError') throw new Error(`Request timed out after ${Math.round(timeoutMs/1000)}s: ${url}`);
+    throw err;
+  } finally { clearTimeout(timer); }
 }
 let providerFallbackInFlight=false;
 function providerBadgeHtml(c={},b=null){
