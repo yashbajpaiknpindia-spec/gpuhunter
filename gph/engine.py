@@ -510,32 +510,10 @@ class OpportunityScanner:
         # Sort net descending; unknown/negative estimates remain visible for diagnosis but will never be rented.
         opportunities.sort(key=lambda x: (bool(x.get("qualified")), x.get("expected_net_day_usd", -999)), reverse=True)
         opportunities = opportunities[:1000]
-        prior_rows = self.db.get_opportunities(limit=2000)
-        prior_by_id = {str(x.get("id")): x for x in prior_rows}
-        notable_changes = []
-        for current in opportunities:
-            previous = prior_by_id.get(str(current.get("id")))
-            if not previous:
-                continue
-            rate_old = parse_num(previous.get("total_hourly_usd"), 0)
-            rate_new = parse_num(current.get("total_hourly_usd"), 0)
-            gross_old = parse_num(previous.get("gross_day_usd"), 0)
-            gross_new = parse_num(current.get("gross_day_usd"), 0)
-            rate_delta = (rate_new - rate_old) / rate_old if rate_old > 0 else 0.0
-            gross_delta = (gross_new - gross_old) / gross_old if gross_old > 0 else 0.0
-            if abs(rate_delta) >= 0.05 or abs(gross_delta) >= 0.10:
-                notable_changes.append({
-                    "gpu_name": current.get("gpu_name"), "offer_id": current.get("offer_id"),
-                    "coin_tag": current.get("coin_tag"), "algorithm": current.get("algorithm"),
-                    "rent_hourly_before_usd": rate_old, "rent_hourly_now_usd": rate_new,
-                    "rent_change_pct": round(rate_delta * 100, 2),
-                    "gross_day_before_usd": gross_old, "gross_day_now_usd": gross_new,
-                    "gross_change_pct": round(gross_delta * 100, 2),
-                    "net_day_now_usd": current.get("expected_net_day_usd"),
-                })
-        if notable_changes:
-            notable_changes.sort(key=lambda x: max(abs(x["rent_change_pct"]), abs(x["gross_change_pct"])), reverse=True)
-            self.db.log("INFO", "market_fluctuation_summary", {"changed_combinations": len(notable_changes), "top_changes": notable_changes[:20]})
+        # Profitability is computed exclusively from the current provider responses above.
+        # A previous opportunities snapshot is only historical context; reading thousands of
+        # old JSON rows here adds database contention and must never gate current calculations.
+        # The dashboard still receives the current ranked snapshot below.
         progress("Saving scan results and audit summary", 94, "Persisting ranked opportunities and scan diagnostics")
         self.db.replace_opportunities(opportunities)
         # Refresh active instances' revenue baseline with the latest provider calculation for the same GPU/coin.

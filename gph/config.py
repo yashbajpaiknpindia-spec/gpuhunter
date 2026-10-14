@@ -225,9 +225,18 @@ class Config:
         elif not any(p.get("enabled") for p in profiles):
             blockers.append("No mining profile is enabled")
         if self.require_pool_metrics_for_live:
-            metric_profiles = [p for p in profiles if p.get("enabled") and (p.get("pool_metrics") or {}).get("url") and (p.get("pool_metrics") or {}).get("revenue_24h_usd_path")]
+            metric_profiles = [
+                p for p in profiles
+                if p.get("enabled")
+                and (p.get("pool_metrics") or {}).get("url")
+                and (p.get("pool_metrics") or {}).get("revenue_24h_usd_path")
+                and (p.get("pool_metrics") or {}).get("source_updated_at_path")
+            ]
             if not metric_profiles:
-                blockers.append("No enabled profile has a pool-reported USD/day metrics connector; live mining requires one")
+                blockers.append(
+                    "No enabled profile has a pool connector with USD/day revenue and a source update timestamp; "
+                    "live mining requires both so stale cached rates cannot pass the safety gate"
+                )
         if self.max_active_instances < 1 or self.max_daily_spend_usd <= 0:
             blockers.append("Risk limits are not valid")
         return blockers
