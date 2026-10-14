@@ -55,8 +55,11 @@ class PoolMetricsClient:
         cfg = profile.get("pool_metrics") or {}
         url_template = str(cfg.get("url") or "").strip()
         revenue_path = str(cfg.get("revenue_24h_usd_path") or "").strip()
-        if not url_template or not revenue_path:
-            raise RuntimeError("Pool metrics URL and revenue_24h_usd_path are required for live mining")
+        source_updated_path = str(cfg.get("source_updated_at_path") or "").strip()
+        if not url_template or not revenue_path or not source_updated_path:
+            raise RuntimeError(
+                "Pool metrics URL, revenue_24h_usd_path, and source_updated_at_path are required for live mining"
+            )
         values = {
             "wallet": quote(wallet, safe=""),
             "worker": quote(worker, safe=""),
@@ -89,12 +92,37 @@ class PoolMetricsClient:
         revenue = _num(value_at_path(data, revenue_path))
         if revenue is None or revenue < 0:
             raise RuntimeError("Pool metrics response has no valid non-negative USD/day field at the configured path")
-        updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        raw_source_updated = value_at_path(data, source_updated_path)
+        source_updated: datetime | None = None
+        numeric_timestamp = _num(raw_source_updated)
+        if numeric_timestamp is not None:
+            # Accept Unix seconds or milliseconds; reject implausible/ambiguous values.
+            stamp = numeric_timestamp / 1000 if numeric_timestamp > 10_000_000_000 else numeric_timestamp
+            try:
+                source_updated = datetime.fromtimestamp(stamp, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                source_updated = None
+        elif isinstance(raw_source_updated, str) and raw_source_updated.strip():
+            try:
+                source_updated = datetime.fromisoformat(raw_source_updated.strip().replace("Z", "+00:00"))
+                if source_updated.tzinfo is None:
+                    source_updated = source_updated.replace(tzinfo=timezone.utc)
+                source_updated = source_updated.astimezone(timezone.utc)
+            except ValueError:
+                source_updated = None
+        if source_updated is None:
+            raise RuntimeError("Pool metrics response is missing a parseable source update timestamp")
+        source_age_seconds = (datetime.now(timezone.utc) - source_updated).total_seconds()
+        max_age_seconds = max(30, int(cfg.get("max_source_age_seconds", 180) or 180))
+        if source_age_seconds < -30 or source_age_seconds > max_age_seconds:
+            raise RuntimeError(f"Pool metrics source data is stale or future-dated ({source_age_seconds:.0f}s; max {max_age_seconds}s)")
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         result: dict[str, Any] = {
-            # revenue_24h_usd is a current USD/day run-rate estimate used by safety gates,
-            # not necessarily money actually earned over the trailing 24 hours.
+            # This is a USD/day run-rate estimate, not necessarily realized trailing-24h income.
             "revenue_24h_usd": revenue,
-            "updated_at": updated_at,
+            "updated_at": fetched_at,
+            "source_updated_at": source_updated.isoformat(timespec="seconds"),
+            "source_age_seconds": max(0, int(source_age_seconds)),
             "source": str(cfg.get("name") or cfg.get("provider") or parts.hostname),
         }
         # Only populate this optional field when the profile explicitly points at a
