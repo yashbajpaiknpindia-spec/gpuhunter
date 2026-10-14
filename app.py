@@ -659,8 +659,34 @@ def state():
 def scan():
     """Start or attach to a scan without holding an HTTP request open for provider calls."""
     started_at = time.monotonic()
-    app.logger.info("Manual market-scan request received")
     try:
+        data = request.get_json(silent=True) or {}
+        raw_filters = data.get("filters") if isinstance(data, dict) else {}
+        raw_filters = raw_filters if isinstance(raw_filters, dict) else {}
+        gpu_model = str(raw_filters.get("gpu_model") or "").strip()[:100]
+        coin = str(raw_filters.get("coin") or "").strip()[:24]
+        def bounded_number(key, default, low, high):
+            try:
+                value = float(raw_filters.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return min(max(value, low), high) if value == value else default
+        max_hourly = raw_filters.get("max_total_hourly_usd")
+        if max_hourly is not None and max_hourly != "":
+            max_hourly = bounded_number("max_total_hourly_usd", 0.0, 0.0, 1000.0)
+        else:
+            max_hourly = None
+        filters = {
+            "gpu_model": gpu_model,
+            "coin": coin.upper(),
+            "max_total_hourly_usd": max_hourly,
+            "min_net_profit_usd_day": bounded_number("min_net_profit_usd_day", 0.0, -1000.0, 100000.0),
+            "min_reliability_pct": bounded_number("min_reliability_pct", 99.0, 0.0, 100.0),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        db.set_setting("scan_market_filters", filters)
+        app.logger.info("Manual market-scan request received with GPU=%s coin=%s max_hourly=%s min_net=%s reliability=%s",
+                        gpu_model or "any", coin.upper() or "any", max_hourly, filters["min_net_profit_usd_day"], filters["min_reliability_pct"])
         started = supervisor.start_scan_async()
         progress = supervisor.current_ui_progress()
         app.logger.info("Manual market-scan request acknowledged (started=%s, elapsed_ms=%d)", started, int((time.monotonic() - started_at) * 1000))
