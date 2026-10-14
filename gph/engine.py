@@ -287,7 +287,8 @@ class OpportunityScanner:
             (datetime.now(timezone.utc) - catalog_updated).total_seconds()
             if catalog_updated else float("inf")
         )
-        catalog_fresh = catalog_age_seconds <= max(1800, int(self.config.vast_audit_interval_seconds) * 2)
+        catalog_refresh_seconds = max(300, min(900, int(self.config.max_profit_data_age_minutes) * 60))
+        catalog_fresh = catalog_age_seconds <= catalog_refresh_seconds
         affordability_budgets = (
             stored_catalog.get("models", [])
             if isinstance(stored_catalog, dict) and catalog_fresh
@@ -319,7 +320,6 @@ class OpportunityScanner:
     def scan(self, progress_callback=None) -> dict[str, Any]:
         progress = progress_callback or (lambda stage, percent, detail: None)
         selected_coin = str(self.config.kryptex_coin or "prl").strip().upper() or "PRL"
-        min_user_net = max(0.0, parse_num(self.config.min_net_profit_usd_day, 0.50))
         progress("Validating provider configuration", 3, f"Preparing automatic {selected_coin} profitability-first search across GPU models")
         if not self.config.vast_api_key:
             raise RuntimeError("VAST_API_KEY is missing. Add it to .env to scan current rentals.")
@@ -337,7 +337,8 @@ class OpportunityScanner:
         prior = self.db.get_setting("gpu_affordability_catalog", {}) or {}
         prior_dt = parse_iso_date(prior.get("updated_at")) if isinstance(prior, dict) else None
         prior_age = (datetime.now(timezone.utc) - prior_dt).total_seconds() if prior_dt else float("inf")
-        prior_fresh = prior_age <= max(1800, int(self.config.vast_audit_interval_seconds) * 2)
+        catalog_refresh_seconds = max(300, min(900, int(self.config.max_profit_data_age_minutes) * 60))
+        prior_fresh = prior_age <= catalog_refresh_seconds
         if not (prior_fresh and isinstance(prior, dict)
                 and str(prior.get("method") or "").startswith("presearch-")
                 and str(prior.get("coin_tag") or "").upper() == selected_coin):
