@@ -623,7 +623,11 @@ async function scanMarket(){
         const progressAt=Date.parse(p.updated_at||'');
         const belongsToThisClick=Number.isFinite(progressAt)&&progressAt>=clickAt-2000;
         const alreadyRunning=Boolean(startResult?.ok&&startResult.data?.started===false);
-        if(String(p.action||'').toLowerCase().includes('market scan')&&(belongsToThisClick||(alreadyRunning&&p.status==='running'))){
+        // If the POST attaches to an existing scan, its progress timestamp can predate
+        // this click. Accept its terminal state too; otherwise a completed scan is ignored
+        // after the first running poll and the UI can spin forever at an old percentage.
+        const attachedTerminal=alreadyRunning&&(p.status==='complete'||p.status==='failed');
+        if(String(p.action||'').toLowerCase().includes('market scan')&&(belongsToThisClick||(alreadyRunning&&p.status==='running')||attachedTerminal)){
           progressObserved=true; lastPollError='';
           showTask('Scan GPU market',p.stage||'Scanning',p.detail||'Waiting for provider response',p.percent??10,p.status||'running');
           if(p.status==='failed'){const failure=new Error(p.detail||'Market scan failed. Check Event log and Render service logs.');failure.scanTerminalFailure=true;throw failure;}
