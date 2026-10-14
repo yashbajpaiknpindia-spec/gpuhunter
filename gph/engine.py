@@ -208,6 +208,11 @@ class OpportunityScanner:
         candidates = [g for g in gpus if not algo or any(
             isinstance(a, dict) and _algokey(a.get("name") or a.get("algorithm")) == algo
             for a in (g.get("algorithms") or []))]
+        # Provider algorithm labels occasionally differ in punctuation/naming. If the
+        # catalogue's exact label finds no GPU, try the full GPU list and trust only
+        # actual coin rows returned by WhatToMine; never infer revenue from the label.
+        if not candidates:
+            candidates = list(gpus)
         from concurrent.futures import ThreadPoolExecutor, as_completed
         pool_fee = max(0.0, min(100.0, parse_num(coin_ref.get("default_fee"), self.config.default_pool_fee_pct)))
         miner_fee = max(0.0, min(100.0, self.config.default_miner_fee_pct))
