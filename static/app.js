@@ -522,6 +522,24 @@ async function api(url,opts={}){
   } finally { clearTimeout(timer); }
 }
 let providerFallbackInFlight=false;
+let dashboardRetryHandle=null;
+let dashboardRetryAttempts=0;
+function scheduleDashboardRetry(){
+  if(dashboardRetryHandle) clearTimeout(dashboardRetryHandle);
+  const delays=[2500,5000,10000,20000,30000];
+  const delay=delays[Math.min(dashboardRetryAttempts,delays.length-1)];
+  dashboardRetryAttempts=Math.min(dashboardRetryAttempts+1,delays.length-1);
+  dashboardRetryHandle=setTimeout(()=>{
+    dashboardRetryHandle=null;
+    if(activeUiTask){scheduleDashboardRetry();return;}
+    refresh();
+  },delay);
+}
+function cancelDashboardRetry(){
+  if(dashboardRetryHandle) clearTimeout(dashboardRetryHandle);
+  dashboardRetryHandle=null;
+  dashboardRetryAttempts=0;
+}
 function providerBadgeHtml(c={},b=null){
   // \"Configured\" only means an environment variable exists. Say so, and only show a green
   // \"connected\" once Vast has actually answered an authenticated account request.
@@ -595,11 +613,17 @@ async function refresh(options={}){
       throw e;
     }
     renderState(state);
-    if(state.database_status?.available===false){setNotice(state.database_status.error||'Dashboard database is degraded; showing the last successful snapshot.','info');}
-    else if(!options.keepNotice) clearNotice();
+    if(state.database_status?.available===false){
+      setNotice(state.database_status.error||'Dashboard data is stale; keeping the last saved view while refreshing in the background.','info');
+      scheduleDashboardRetry();
+    }else{
+      cancelDashboardRetry();
+      if(!options.keepNotice) clearNotice();
+    }
     return state;
   }catch(err){
     setNotice(`Could not load dashboard: ${err.message}`,'error');
+    scheduleDashboardRetry();
     await refreshProviderCardsWithoutDashboard();
     if(options.throwOnError) throw err;
     return null;
