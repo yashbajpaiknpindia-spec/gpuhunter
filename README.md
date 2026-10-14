@@ -328,3 +328,10 @@ This release serves bundled CSS/JavaScript from the absolute application path wi
 - Automatic scans remain scheduled by `AUTO_SCAN_ENABLED` and `SCAN_INTERVAL_SECONDS` (minimum 60 seconds). The scanner status panel polls background progress and labels successful, running, and failed states. Auto-scan is recurring, not a continuous per-second marketplace poll.
 - Regression tests cover strict-query empty results, broad fallback, documented GET fallback, fallback metadata safety, and offer-level rejections. The app never lowers its safety gates to force a rental.
 
+
+
+## Automatic Pearl-first profitability search
+
+The manual Scan Market action uses the configured Kryptex coin (defaults to PRL/Pearl) and does not require GPU-model or hourly-price filters. Before querying Vast, it loads the current WhatToMine GPU/coin catalogue and calculates conservative revenue and maximum affordable all-in hourly rental ceilings for supported GPU benchmarks. It then sends targeted Vast searches for the best positive-ceiling GPU models, alongside the quota-paced broad audit used to discover new models. Every returned offer is recalculated locally; stale/unsupported estimates and offers that fail host, payment, wallet, profile, spend, or monitoring gates remain ineligible for live rental.
+
+The Overview shows the automatic GPU affordability catalogue and, when fresh and matching the configured coin, the Kryptex public pool coin-price sample as a separate reference (not GPU revenue). The dashboard does not accept manual GPU/price search filters. Live auto-rental remains blocked until the explicit Vast mining-credit eligibility, payment-source, wallet, miner-profile, SSH monitoring, and pool telemetry gates pass; setting the search strategy does not bypass those checks.
