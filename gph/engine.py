@@ -206,8 +206,9 @@ class OpportunityScanner:
                 order=self.config.vast_search_order,
                 max_total_hourly_usd=self.config.max_total_hourly_usd,
                 affordability_budgets=(
-                    self.db.get_setting("gpu_affordability_catalog", [])
-                    if plan.get("include_audit") else []
+                    (self.db.get_setting("gpu_affordability_catalog", {}) or {}).get("models", [])
+                    if plan.get("include_audit") and isinstance(self.db.get_setting("gpu_affordability_catalog", {}), dict)
+                    else []
                 ),
             )
             offers = list(provider_search.get("offers") or [])
@@ -495,7 +496,7 @@ class OpportunityScanner:
                     "total_hourly_usd": round(total_rate, 6),
                     "disk_hourly_usd": round(disk_rate, 6),
                     "reliability": round(reliability, 5),
-                    "verified": verified_status if verified_status is not None else (True if str(offer.get("_gph_search_stage") or "") == "strict" else False),
+                    "verified": verified_status if verified_status is not None else (True if str(offer.get("_gph_search_stage") or "") in {"strict", "targeted"} else False),
                     "rentable": rentable_status if rentable_status is not None else (True if str(offer.get("_gph_search_stage") or "") == "strict" else False),
                     "offer_safety_passed": not safety_reasons,
                     "search_stage": str(offer.get("_gph_search_stage") or provider_search.get("query_stage") or "unknown"),
