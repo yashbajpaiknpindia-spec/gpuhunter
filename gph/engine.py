@@ -448,6 +448,23 @@ class OpportunityScanner:
                     live_capability_ready=live_capability_ready,
                     additional_reasons=extra_reasons,
                 )
+                # Reverse the same conservative economics gates to tell the operator the
+                # maximum all-in Vast rate this GPU/coin pair could afford. This is a
+                # decision ceiling, not a quote: disk/bandwidth reserve, fees, haircut,
+                # required profit and revenue/cost ratio are all included.
+                after_fees_day = parse_num(p.get("after_fees_day_usd"), 0.0)
+                bandwidth_reserve = max(parse_num(self.config.bandwidth_reserve_usd_day, 0.0), 0.0)
+                required_net = max(parse_num(self.config.min_net_profit_usd_day, 0.0), 0.0)
+                required_ratio = max(parse_num(self.config.min_revenue_cost_ratio, 1.0), 0.01)
+                profit_limited_hourly = (after_fees_day - bandwidth_reserve - required_net) / 24.0
+                ratio_limited_hourly = (after_fees_day / required_ratio - bandwidth_reserve) / 24.0
+                max_affordable_hourly = max(0.0, min(profit_limited_hourly, ratio_limited_hourly))
+                revenue_source = (
+                    "WhatToMine + Kryptex GPU reference"
+                    if kryptex_daily_revenue is not None
+                    else "WhatToMine GPU/coin calculation"
+                )
+                revenue_source_updated_at = row.get("last_update") or (coin_ref or {}).get("last_update")
                 if profile_reason:
                     p["reasons"].append(profile_reason)
                     p["qualified"] = False
@@ -484,7 +501,11 @@ class OpportunityScanner:
                     "gpu_count": normalized_gpu_count,
                     "data_fresh": is_fresh,
                     "data_freshness": freshness_label,
-                    "data_updated_at": row.get("last_update") or (coin_ref or {}).get("last_update"),
+                    "data_updated_at": revenue_source_updated_at,
+                    "revenue_source": revenue_source,
+                    "revenue_source_updated_at": revenue_source_updated_at,
+                    "max_affordable_total_hourly_usd": round(max_affordable_hourly, 6),
+                    "pool_account_data_note": "Kryptex public Pool API reports this configured account's workers/rewards; it is not a universal per-GPU benchmark.",
                     "profile_id": profile.get("id") if profile else None,
                     "profile_available": profile_ready,
                     "pool_fee_pct": round(pool_fee, 3),
