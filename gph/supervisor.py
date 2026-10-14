@@ -474,6 +474,7 @@ class Supervisor:
         # Persist first; if PostgreSQL is unavailable, do not claim a durable config save.
         self.db.set_setting("kryptex_connection_config", saved)
         with self._kryptex_config_lock:
+            self._kryptex_generation += 1
             self.config.kryptex_mining_username = username
             self.config.kryptex_coin = coin
             self.config.kryptex_worker = worker
@@ -590,7 +591,19 @@ class Supervisor:
 
     def kryptex_refresh_state(self) -> dict[str, Any]:
         status = self.cached_kryptex_status()
+        # A provider/database worker must never leave the browser spinner running
+        # forever. Requests have short network timeouts, so a refresh older than 30s
+        # is considered wedged and is surfaced as a terminal diagnostic. A late result
+        # may still update the cache, but the UI can recover and request another check.
         with self._kryptex_refresh_state_lock:
+            started = _dt(self._kryptex_refresh_started_at)
+            age = (datetime.now(timezone.utc) - started).total_seconds() if started else 0
+            if self._kryptex_refreshing and age > 30:
+                self._kryptex_refreshing = False
+                self._kryptex_refresh_finished_at = now_iso()
+                status["connected"] = bool(status.get("connected"))
+                status["error"] = "Kryptex refresh timed out after 30 seconds. No worker is assumed active; retry the read-only status check."
+                status["updated_at"] = now_iso()
             status["refreshing"] = self._kryptex_refreshing
             status["refresh_started_at"] = self._kryptex_refresh_started_at
             status["refresh_finished_at"] = self._kryptex_refresh_finished_at

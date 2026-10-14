@@ -141,21 +141,29 @@ class OpportunityScanner:
             self._extra_slots.append((f"search-key-{n}", VastClient(key, config.vast_api_base), extra_budget))
 
     def _search_slots(self) -> list[tuple[str, VastClient, VastSearchBudget]]:
-        """Search order: extra search-only keys first, the funded main key last, so the main key's
-        daily rows stay available for pre-rental revalidation (get_offer)."""
+        """Use VAST_SEARCH_API_KEYS exclusively for offer discovery when configured.
+
+        The funded VAST_API_KEY is reserved for balance, offer revalidation, rental,
+        monitoring and destruction. Only fall back to the main key for searching when
+        no dedicated search-only key exists, so a configured search key can never cause
+        balance or rental calls against the other account.
+        """
+        if self._extra_slots:
+            return list(self._extra_slots)
         if self._vast_client is None:
             self._vast_client = VastClient(self.config.vast_api_key, self.config.vast_api_base)
-        return list(self._extra_slots) + [("main", self._vast_client, self.search_budget)]
+        return [("main-fallback", self._vast_client, self.search_budget)]
 
     def search_pacing(self) -> tuple[float, float]:
-        """(recommended interval, cooldown) of the search key that can search soonest."""
-        budgets = [b for _, _, b in self._extra_slots] + [self.search_budget]
+        """(recommended interval, cooldown) of the keys actually allowed to search."""
+        budgets = [b for _, _, b in self._extra_slots] if self._extra_slots else [self.search_budget]
         best = min(budgets, key=lambda b: max(b.recommended_interval(), b.cooldown_remaining()))
         return best.recommended_interval(), best.cooldown_remaining()
 
     def search_status(self) -> list[dict[str, Any]]:
         out = []
-        for label, _client, b in [(l, c, bb) for l, c, bb in self._extra_slots] + [("main", None, self.search_budget)]:
+        slots = self._extra_slots if self._extra_slots else [("main-fallback", None, self.search_budget)]
+        for label, _client, b in slots:
             st = b.status()
             out.append({"key": label, "rows_used_today": st["rows_used_today"],
                         "rows_remaining_today": st["rows_remaining_today"],
