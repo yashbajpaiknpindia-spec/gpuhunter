@@ -345,10 +345,9 @@ class VastClient:
         targeted_errors: list[str] = []
         rate_limit: dict[str, Any] | None = None
         targeted_budgets = affordability_budgets if isinstance(affordability_budgets, list) else []
-        # Use previously measured conservative per-model economics to ask Vast for the exact
-        # GPU models at or below their affordable all-in rate. This targeted pass runs only
-        # alongside the quota-paced broad audit; current local economics are recalculated later.
-        if include_audit and not strict_error and targeted_budgets:
+        # Search affordable GPU models on every scan, not only during the hourly broad audit.
+        # The broad audit separately discovers new models at a quota-paced interval.
+        if not strict_error and targeted_budgets:
             for budget_row in targeted_budgets[:6]:
                 if not isinstance(budget_row, dict):
                     continue

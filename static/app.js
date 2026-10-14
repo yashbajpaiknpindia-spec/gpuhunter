@@ -146,16 +146,32 @@ function renderOfferDiagnostics(){
     return `<tr><td><div class="gpu-cell">${esc(x.gpu_name||'Unknown GPU')}</div><div class="sub-cell">Offer #${esc(x.offer_id)} · ${esc(x.region||'Unknown region')} · ${esc(x.search_stage||'unknown')} query</div></td><td><div class="money">${currency(x.total_hourly_usd,4)}/h</div><div class="sub-cell">${esc(inrLabel(x.total_hourly_usd,4))}/h</div></td><td>${number(Number(x.reliability||0)*100,1)}%</td><td><span class="scan-flag ${x.verified===true?'good':x.verified===false?'bad':'unknown'}">V ${esc(verified)}</span> <span class="scan-flag ${x.rentable===true?'good':x.rentable===false?'bad':'unknown'}">R ${esc(rentable)}</span></td><td>${x.benchmark_matched?`<span class="pill pill-good">MATCHED</span><div class="sub-cell">${esc(x.benchmark_gpu_name||'GPU benchmark')}</div>`:`<span class="pill pill-bad">NO MATCH</span><div class="sub-cell">No calculation</div>`}</td><td><div class="money ${Number(x.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${x.best_expected_net_day_usd===null||x.best_expected_net_day_usd===undefined?'—':currency(x.best_expected_net_day_usd)}</div><div class="sub-cell">best supported coin/algorithm</div></td><td><span class="pill ${tone}">${esc(state)}</span><div class="diagnostic-reasons">${esc(reasons)}</div><div class="sub-cell">${Number(x.coin_pairs_evaluated||0)} pairs · ${Number(x.economically_positive_pairs||0)} economics-positive</div></td></tr>`;
   }).join('');
 }
+function renderAffordabilityCatalogue(catalog, kryptex){
+  const table=$('affordabilityTable'); if(!table)return;
+  const models=Array.isArray(catalog?.models)?catalog.models:[];
+  const poolCoin=String(kryptex?.coin||'').toUpperCase();
+  const poolPrice=Number(kryptex?.coin_price_sample);
+  const poolUpdated=Date.parse(kryptex?.updated_at||'');
+  const poolAgeMs=Number.isFinite(poolUpdated)?Date.now()-poolUpdated:Infinity;
+  const poolMaxAgeMs=Math.max(180000,Number(appState?.config?.kryptex_poll_interval_seconds||60)*3000);
+  const poolPriceFresh=Boolean(kryptex?.coin_price_available&&poolCoin===String(catalog?.coin_tag||'PRL').toUpperCase()&&Number.isFinite(poolPrice)&&poolPrice>0&&poolAgeMs>=-60000&&poolAgeMs<=poolMaxAgeMs);
+  const poolPriceCell=poolPriceFresh?`${currency(poolPrice,8)} <div class="sub-cell">${esc(kryptex.updated_at||'timestamp unavailable')} · reference only</div>`:'Unavailable / stale';
+  if(!models.length){table.innerHTML='<tr><td colspan="6" class="empty-cell">No fresh positive-affordability models. If WhatToMine has no current PRL benchmark, GPU Hunter will not invent revenue or rent a GPU.</td></tr>';return;}
+  table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${poolPriceCell}</td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}<div class="sub-cell">${esc(m.source||catalog.source||'Benchmark source')}</div></td></tr>`).join('');
+}
 function renderOpportunities(){
   if(!appState) return;
   renderScanDiagnostics(appState); renderOfferDiagnostics();
   const rows=appState.opportunities||[]; const filter=$('decisionFilter')?.value||'all'; const query=($('searchFilter')?.value||'').toLowerCase().trim();
-  const visible=rows.filter(x=>{
+   const visible=rows.filter(x=>{
     if(filter==='economics'&&!x.economics_qualified)return false;
     if(filter==='qualified'&&!x.qualified)return false;
     if(filter==='rejected'&&x.qualified)return false;
-    const text=`${x.gpu_name} ${x.coin_tag} ${x.coin_name} ${x.algorithm} ${x.offer_id} ${(x.reasons||[]).join(' ')}`.toLowerCase(); return !query||text.includes(query);
+     const text=`${x.gpu_name} ${x.coin_tag} ${x.coin_name} ${x.algorithm} ${x.offer_id} ${(x.reasons||[]).join(' ')}`.toLowerCase(); return !query||text.includes(query);
   });
+  renderAffordabilityCatalogue(appState.gpu_affordability_catalog||{}, appState.kryptex||{});
+  const cat=appState.gpu_affordability_catalog||{}; const modelCount=Array.isArray(cat.models)?cat.models.length:0;
+  const status=$('smartScanStatus'); if(status)status.textContent=modelCount? `Auto-estimated ${modelCount} GPU models for ${cat.coin_tag||'PRL'} from ${cat.source||'provider benchmarks'} (updated ${cat.updated_at||'timestamp unavailable'}). Targeted Vast searches use only positive affordability ceilings; offers are revalidated before any paid action.` : 'No fresh positive-affordability catalogue yet. The first scan must load current WhatToMine GPU/coin data; if PRL has no supported calculation, the system will report that instead of guessing revenue.';
   let empty='No coin-level rows match these filters. Offer-level audit below still shows every returned Vast offer and its reason for exclusion.';
   if(!rows.length){
     const summary=appState.last_scan_summary||{};
@@ -700,6 +716,7 @@ $('modalCancel').addEventListener('click',closeModal);$('modalConfirm').addEvent
 $('scanBtn').addEventListener('click',scanMarket);$('heroScanBtn').addEventListener('click',scanMarket);
 $('saveKryptexConfigBtn').addEventListener('click',configureKryptex);$('refreshInstancesBtn').addEventListener('click',()=>runUiTask('Refresh instances',$('refreshInstancesBtn'),async()=>{showTask('Refresh instances','Requesting current provider instances', 'Loading live Vast instance state and local managed history',30,'running'); await refresh({keepNotice:true,throwOnError:true}); showTask('Refresh instances','Complete','Instance table and counters updated',100,'complete');},'Loading provider and local instance history').catch(err=>setNotice(err.message,'error')));$('refreshEventsBtn').addEventListener('click',()=>runUiTask('Refresh event log',$('refreshEventsBtn'),async()=>{showTask('Refresh event log','Loading audit events','Fetching latest saved events and rendering the event table',35,'running'); await refresh({keepNotice:true,throwOnError:true}); showTask('Refresh event log','Complete','Audit event table updated',100,'complete');},'Loading the latest audit trail').catch(err=>setNotice(err.message,'error')));$('saveAutomationBtn').addEventListener('click',saveAutomation);$('deployTargetBtn').addEventListener('click',deployTarget);$('refreshKryptexBtn').addEventListener('click',refreshKryptex);
 $('decisionFilter').addEventListener('change',renderOpportunities);$('searchFilter').addEventListener('input',renderOpportunities);
+ 
 $('targetInstances').addEventListener('input',()=>{updateTargetPreview();if(appState)renderFinance(appState);});
 $('targetInstances').addEventListener('change',()=>{updateTargetPreview();if(appState)renderFinance(appState);});
 $('refreshFxBtn').addEventListener('click',async()=>{const b=$('refreshFxBtn');b.disabled=true;const prior=b.textContent;b.textContent='Refreshing USD/INR…';try{const data=await api('/api/fx/refresh',{method:'POST',body:JSON.stringify({})});if(appState)appState.fx=data.fx||{};renderFx(data.fx||{});document.querySelectorAll('.metric-fx').forEach(x=>{if(x.id==='metricNetInr'){const best=appState?.summary?.best_candidate;x.textContent=best?`${inrLabel(best.expected_net_day_usd)} /day · display conversion only`:'INR appears here when a qualified estimate exists';}else{const sm=appState?.summary||{};x.textContent=`${inrLabel(sm.current_hourly_cost_usd||0)}/hr · ${inrLabel(sm.projected_current_daily_rent_usd||0)}/day`;}});if(appState)renderState(appState);setNotice(data.fx?.refresh_throttled?`The FX provider was checked recently. Keeping the current ${data.fx?.available?'fresh':'unavailable'} quote; try again in about ${Math.ceil((data.fx?.retry_after_seconds||60)/60)} minute(s).`:data.fx?.available?'USD/INR reference refreshed. USD remains the accounting base; this does not alter profit gates.':(data.fx?.error||'A fresh USD/INR quote is unavailable.'),data.fx?.available&&!data.fx?.refresh_throttled?'success':'info');}catch(err){setNotice(err.message,'error');}finally{b.disabled=false;if(!appState?.fx?.available)b.textContent=prior;}});

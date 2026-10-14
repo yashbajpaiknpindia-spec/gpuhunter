@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPU Profit Hunter v0.7.12</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.12') }}">
+  <title>GPU Profit Hunter v0.7.14</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.14') }}">
 </head>
 <body>
   <div class="shell">
@@ -18,7 +18,7 @@
       <button class="nav" data-section="events"><span class="nav-icon">≋</span> Event log</button>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-status"><span class="status-dot idle" id="sidebarDot"></span><div><b id="sidebarMode">Scanner mode</b><small id="sidebarModeCaption">Live spending disabled</small></div></div>
-      <div class="sidebar-foot">v0.7.12 · rental intelligence</div>
+      <div class="sidebar-foot">v0.7.14 · rental intelligence</div>
     </aside>
 
     <main class="main">
@@ -67,6 +67,12 @@
           <div class="metric-card"><div class="metric-head"><span>Profit gate passed</span><span class="metric-icon purple">✓</span></div><div class="metric-value" id="metricQualified">—</div><div class="metric-sub" id="metricQualifiedSub">Requires price, data, and mining-profile gates</div></div>
         </div>
 
+        <div class="panel smart-scan-panel">
+          <div class="panel-head"><div><h3>Autonomous Pearl mining search</h3><p>No manual GPU or price filters. GPU Hunter estimates conservative PRL revenue for supported GPU benchmarks, calculates each model's maximum affordable all-in rental rate, then searches Vast for matching offers. It only considers rentals that remain profitable after fees and safety reserves.</p></div><span class="pill pill-muted">PRL FIRST · ANY GPU</span></div>
+          <div class="smart-scan-status" id="smartScanStatus">Waiting for fresh WhatToMine GPU and coin benchmarks. Scan Market runs the automatic profitability-first workflow.</div>
+        </div>
+        <div class="section-heading diagnostics-heading"><div><div class="section-kicker">PROFITABILITY FIRST</div><h3>GPU affordability catalogue</h3><p>Automatically calculated from fresh benchmark data. Models with no positive affordable rental price are excluded from targeted searches; every returned offer is recalculated before any live action.</p></div></div>
+        <div class="table-wrap affordability-wrap"><table class="offer-diagnostic-table"><thead><tr><th>GPU model</th><th>Coin</th><th>Max affordable all-in USD/hour</th><th>Estimated net/day at ceiling</th><th>Kryptex pool coin-price reference</th><th>Benchmark source updated</th></tr></thead><tbody id="affordabilityTable"><tr><td colspan="6" class="empty-cell">Run Scan Market to calculate PRL affordability across supported GPU models.</td></tr></tbody></table></div>
         <div class="finance-row">
           <div class="panel wallet-panel">
             <div class="panel-head"><div><div class="section-kicker">VAST ACCOUNT</div><h3>Wallet balance & 24-hour runway</h3><p>Live credit balance from your authenticated Vast account; never inferred from mining revenue.</p></div><button class="text-button" id="refreshVastBalanceBtn" type="button">↻ Refresh balance</button></div>
@@ -165,6 +171,6 @@ KRYPTEX_COIN=prl</code><span>Render can prompt for these values during Blueprint
     </main>
   </div>
   <div id="confirmModal" class="modal hidden"><div class="modal-card"><div class="modal-mark">!</div><h3 id="modalTitle">Confirm action</h3><p id="modalText">This action affects a paid cloud resource.</p><div class="modal-actions"><button class="btn btn-secondary" id="modalCancel">Cancel</button><button class="btn btn-danger" id="modalConfirm">Confirm</button></div></div></div>
-  <script src="{{ url_for('static', filename='app.js', v='0.7.12') }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v='0.7.14') }}"></script>
 </body>
 </html>

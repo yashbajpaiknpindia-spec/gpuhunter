@@ -194,6 +194,87 @@ class OpportunityScanner:
                 errors.append(exc)
         raise min(errors, key=lambda e: float(getattr(e, "retry_after", 0) or 0))
 
+    def _build_presearch_affordability_catalog(self, wtm, gpus: list[dict[str, Any]], coins: list[dict[str, Any]]) -> dict[str, Any]:
+        """Build conservative coin-specific rental ceilings before querying Vast."""
+        coin_tag = str(self.config.kryptex_coin or "prl").strip().upper() or "PRL"
+        coin_map = _build_coin_map(coins)
+        coin_ref = coin_map.get(coin_tag)
+        stamp = now_iso()
+        if not coin_ref:
+            return {"updated_at": stamp, "coin_tag": coin_tag, "models": [],
+                    "source": "WhatToMine GPU/coin calculation", "method": "presearch-no-coin-benchmark",
+                    "note": f"WhatToMine did not return a {coin_tag} coin benchmark; revenue cannot be guessed."}
+        algo = _algokey(coin_ref.get("algorithm") or "")
+        candidates = [g for g in gpus if not algo or any(
+            isinstance(a, dict) and _algokey(a.get("name") or a.get("algorithm")) == algo
+            for a in (g.get("algorithms") or []))]
+        # Provider algorithm labels occasionally differ in punctuation/naming. If the
+        # catalogue's exact label finds no GPU, try the full GPU list and trust only
+        # actual coin rows returned by WhatToMine; never infer revenue from the label.
+        if not candidates:
+            candidates = list(gpus)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        pool_fee = max(0.0, min(100.0, parse_num(coin_ref.get("default_fee"), self.config.default_pool_fee_pct)))
+        miner_fee = max(0.0, min(100.0, self.config.default_miner_fee_pct))
+        fee_multiplier = (1.0-pool_fee/100.0)*(1.0-miner_fee/100.0)
+        haircut = max(0.0, min(0.95, self.config.revenue_haircut))
+        reserve = max(0.0, self.config.bandwidth_reserve_usd_day)
+        min_net = max(0.0, self.config.min_net_profit_usd_day)
+        ratio = max(0.01, self.config.min_revenue_cost_ratio)
+        budget_cap = max(0.0, self.config.max_daily_spend_usd-reserve)/24.0
+        configured_cap = self.config.max_total_hourly_usd if self.config.max_total_hourly_usd > 0 else float("inf")
+        rows_out = []
+        errors = []
+        def calc(gpu):
+            return gpu, wtm.calculate_gpu(gpu)
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="gph-prl-benchmark") as pool:
+            futures = {pool.submit(calc, gpu): gpu for gpu in candidates}
+            for future in as_completed(futures):
+                gpu = futures[future]
+                try:
+                    _, rows = future.result()
+                except Exception as exc:
+                    errors.append(str(gpu.get("name") or "Unknown GPU") + ": " + exc.__class__.__name__)
+                    continue
+                for row in rows:
+                    tag = _tag(row.get("tag") or row.get("symbol"))
+                    name = str(row.get("name") or "").strip().upper()
+                    if tag != coin_tag and name != coin_tag:
+                        continue
+                    fresh, _ = _freshness(row, coin_ref)
+                    if not fresh or row.get("lagging") is True or row.get("testing") is True or coin_ref.get("lagging") is True or coin_ref.get("testing") is True:
+                        continue
+                    gross = parse_num(row.get("revenue24"), parse_num(row.get("revenue"), parse_num(row.get("profit24"), parse_num(row.get("profit"), 0.0))))
+                    if gross <= 0:
+                        continue
+                    after_fees = gross * (1.0-haircut) * fee_multiplier
+                    cap = max(0.0, min((after_fees-reserve-min_net)/24.0, (after_fees/ratio-reserve)/24.0,
+                                       budget_cap, configured_cap,
+                                       self.config.max_gpu_hourly_usd if self.config.max_gpu_hourly_usd > 0 else float("inf")))
+                    if cap <= 0:
+                        continue
+                    rows_out.append({
+                        "gpu_name": str(gpu.get("name") or "Unknown GPU"),
+                        "max_total_hourly_usd": round(cap, 6), "coin_tag": coin_tag,
+                        "best_expected_net_day_usd": round(after_fees-cap*24.0-reserve, 6),
+                        "conservative_gross_day_usd": round(gross*(1.0-haircut), 6),
+                        "gross_day_usd": round(gross, 6),
+                        "source_updated_at": row.get("last_update") or coin_ref.get("last_update"),
+                        "source": "WhatToMine GPU/coin calculation",
+                    })
+        by_name = {}
+        for row in rows_out:
+            key = normalized_gpu(row["gpu_name"])
+            if key and (key not in by_name or row["max_total_hourly_usd"] > by_name[key]["max_total_hourly_usd"]):
+                by_name[key] = row
+        models = sorted(by_name.values(), key=lambda row: row["max_total_hourly_usd"], reverse=True)
+        return {"updated_at": stamp, "coin_tag": coin_tag, "models": models,
+                "source": "WhatToMine GPU/coin calculation",
+                "method": "presearch-fresh-benchmark-conservative-affordability-ceilings",
+                "benchmarks_checked": len(candidates), "positive_models": len(models),
+                "errors": errors[:20],
+                "note": "Current coin estimate with revenue haircut, fees, minimum net, revenue/cost ratio, bandwidth reserve and daily spend cap."}
+
     def _run_vast_search(self, vast, plan, progress):
         provider_search: dict[str, Any]
         detailed_search = getattr(vast, "search_offers_with_diagnostics", None)
@@ -206,19 +287,23 @@ class OpportunityScanner:
             (datetime.now(timezone.utc) - catalog_updated).total_seconds()
             if catalog_updated else float("inf")
         )
-        catalog_fresh = catalog_age_seconds <= max(1800, int(self.config.vast_audit_interval_seconds) * 2)
+        catalog_refresh_seconds = max(300, min(900, int(self.config.max_profit_data_age_minutes) * 60))
+        catalog_fresh = catalog_age_seconds <= catalog_refresh_seconds
         affordability_budgets = (
             stored_catalog.get("models", [])
-            if plan.get("include_audit") and isinstance(stored_catalog, dict) and catalog_fresh else []
+            if isinstance(stored_catalog, dict) and catalog_fresh
+            and str(stored_catalog.get("method") or "").startswith("presearch-") else []
         )
+        effective_max_hourly = parse_num(self.config.max_total_hourly_usd, 0.0)
+        min_reliability = self.config.min_reliability
         if callable(detailed_search):
             provider_search = detailed_search(
-                limit=plan["strict_limit"], min_reliability=self.config.min_reliability,
+                limit=plan["strict_limit"], min_reliability=min_reliability,
                 progress_callback=progress,
                 include_audit=plan["include_audit"], audit_limit=plan["audit_limit"] or None,
                 audit_skip_reason=plan["audit_skip_reason"],
                 order=self.config.vast_search_order,
-                max_total_hourly_usd=self.config.max_total_hourly_usd,
+                max_total_hourly_usd=effective_max_hourly,
                 affordability_budgets=affordability_budgets,
             )
             offers = list(provider_search.get("offers") or [])
@@ -234,7 +319,8 @@ class OpportunityScanner:
 
     def scan(self, progress_callback=None) -> dict[str, Any]:
         progress = progress_callback or (lambda stage, percent, detail: None)
-        progress("Validating provider configuration", 3, "Checking required Vast and WhatToMine credentials")
+        selected_coin = str(self.config.kryptex_coin or "prl").strip().upper() or "PRL"
+        progress("Validating provider configuration", 3, f"Preparing automatic {selected_coin} profitability-first search across GPU models")
         if not self.config.vast_api_key:
             raise RuntimeError("VAST_API_KEY is missing. Add it to .env to scan current rentals.")
         if not self.config.whattomine_api_token:
@@ -243,6 +329,22 @@ class OpportunityScanner:
         if self._wtm_client is None:
             self._wtm_client = WhatToMineClient(self.config.whattomine_api_token)
         wtm = self._wtm_client
+        progress("Loading GPU and coin benchmarks", 7, "Loading WhatToMine's current GPU catalogue and the configured coin")
+        gpus = wtm.get_gpus()
+        coins = wtm.get_coins()
+        coin_map = _build_coin_map(coins)
+        profiles = load_profiles(self.config.miner_profiles_path)
+        prior = self.db.get_setting("gpu_affordability_catalog", {}) or {}
+        prior_dt = parse_iso_date(prior.get("updated_at")) if isinstance(prior, dict) else None
+        prior_age = (datetime.now(timezone.utc) - prior_dt).total_seconds() if prior_dt else float("inf")
+        catalog_refresh_seconds = max(300, min(900, int(self.config.max_profit_data_age_minutes) * 60))
+        prior_fresh = prior_age <= catalog_refresh_seconds
+        if not (prior_fresh and isinstance(prior, dict)
+                and str(prior.get("method") or "").startswith("presearch-")
+                and str(prior.get("coin_tag") or "").upper() == selected_coin):
+            progress("Calculating profitability before Vast search", 10, f"Estimating fresh {selected_coin} revenue and maximum affordable all-in rent across GPU benchmarks")
+            prior = self._build_presearch_affordability_catalog(wtm, gpus, coins)
+            self.db.set_setting("gpu_affordability_catalog", prior)
         slots = self._search_slots()
         tried = 0
         while True:
@@ -251,7 +353,7 @@ class OpportunityScanner:
             label, vast, budget, plan = self._pick_search_slot(slots)
             via = "" if len(slots) == 1 else f" via {label} key"
             progress("Requesting current Vast GPU offers", 10,
-                     f"Searching up to {plan['strict_limit']} verified, rentable single-GPU offers{via} "
+                     f"Searching Vast for verified offers within fresh {selected_coin} affordability ceilings{via} "
                      f"({budget.rows_used_today():,}/{budget.usable_rows:,} daily search rows used)")
             try:
                 offers, provider_search = self._run_vast_search(vast, plan, progress)
@@ -281,13 +383,7 @@ class OpportunityScanner:
             # step so the last good opportunity snapshot is kept instead of being wiped.
             detail = provider_search.get("strict_error") or provider_search.get("fallback_error")
             raise RuntimeError(f"Vast offer search failed, so the previous results were kept: {detail}")
-        progress("Loading WhatToMine GPU benchmarks", 20, f"Vast returned {len(offers)} offers ({provider_search.get('query_stage', 'unknown')} query); requesting GPU benchmark catalogue")
-        gpus = wtm.get_gpus()
-        progress("Loading supported coin and algorithm catalogue", 25, f"Received {len(gpus)} GPU benchmark records")
-        coins = wtm.get_coins()
-        progress("Preparing profitability calculations", 29, f"Loaded {len(coins)} coin records; matching offers to supported GPU models")
-        coin_map = _build_coin_map(coins)
-        profiles = load_profiles(self.config.miner_profiles_path)
+        progress("Preparing offer-level profitability", 25, f"Loaded {len(gpus)} GPU benchmarks and {len(coins)} coin records; rechecking Vast offers against fresh {selected_coin} economics")
 
         # Optional independent Kryptex cross-check. Only use values whose field is explicitly
         # labelled as daily revenue, and only while the Kryptex snapshot is fresh. Its GPU pages
@@ -381,8 +477,8 @@ class OpportunityScanner:
                 })
                 continue
             gpu_name = str(offer.get("gpu_name") or offer.get("gpu_name_display") or offer.get("model_name") or "Unknown GPU")
-            safety_reasons, reliability, normalized_gpu_count, verified_status, rentable_status = _offer_safety_reasons(offer, self.config.min_reliability)
             gpu_rate, total_rate, disk_rate = offer_hourly_cost(offer)
+            safety_reasons, reliability, normalized_gpu_count, verified_status, rentable_status = _offer_safety_reasons(offer, self.config.min_reliability)
             review: dict[str, Any] = {
                 "offer_id": offer_id, "gpu_name": gpu_name,
                 "region": offer.get("geolocation") or offer.get("country") or offer.get("region") or "Unknown",
@@ -424,6 +520,8 @@ class OpportunityScanner:
             for row in rows:
                 coin_tag = _tag(row.get("tag") or row.get("symbol"))
                 if not coin_tag:
+                    continue
+                if selected_coin and coin_tag.upper() != selected_coin and str(row.get("name") or "").strip().upper() != selected_coin:
                     continue
                 coin_ref = coin_map.get(coin_tag)
                 coin_name = str(row.get("name") or (coin_ref or {}).get("name") or coin_tag)
@@ -616,38 +714,9 @@ class OpportunityScanner:
             status_key = str(review.get("status") or "UNKNOWN")
             rejection_counts[status_key] = rejection_counts.get(status_key, 0) + 1
         self.db.set_setting("last_scan_offer_diagnostics", offer_diagnostics[:500])
-        # Feed the next quota-paced targeted search with fresh, observed GPU-name ceilings.
-        # These are learned from current WhatToMine calculations and local Vast prices; a
-        # broad audit remains enabled to discover models not represented in this catalog.
-        affordability_by_gpu: dict[str, dict[str, Any]] = {}
-        for item in opportunities:
-            if not item.get("data_fresh") or parse_num(item.get("gross_day_usd"), 0) <= 0:
-                continue
-            gpu_key = str(item.get("gpu_name") or "").strip()
-            cap = parse_num(item.get("max_affordable_total_hourly_usd"), 0)
-            if not gpu_key or cap <= 0:
-                continue
-            previous = affordability_by_gpu.get(gpu_key)
-            score = parse_num(item.get("expected_net_day_usd"), -1e9)
-            if previous is None or score > parse_num(previous.get("best_expected_net_day_usd"), -1e9):
-                affordability_by_gpu[gpu_key] = {
-                    "gpu_name": gpu_key,
-                    "max_total_hourly_usd": round(cap, 6),
-                    "coin_tag": item.get("coin_tag"),
-                    "best_expected_net_day_usd": round(score, 6),
-                    "source_updated_at": item.get("revenue_source_updated_at") or item.get("data_updated_at"),
-                }
-        next_catalog = sorted(
-            affordability_by_gpu.values(),
-            key=lambda x: parse_num(x.get("best_expected_net_day_usd"), -1e9),
-            reverse=True,
-        )[:6]
-        if next_catalog:
-            self.db.set_setting("gpu_affordability_catalog", {
-                "updated_at": scanned_at,
-                "models": next_catalog,
-                "method": "fresh provider estimate + conservative profit gates",
-            })
+        # Keep the pre-search catalogue intact: it is calculated from current coin/GPU
+        # benchmarks before offers are queried, and drives targeted Vast discovery next cycle.
+        # Observed offer rows are still saved separately in gph_opportunities.
         self.db.log("INFO", "market_scan_completed", {
             "offers_seen": len(offers), "strict_count": provider_search.get("strict_count", len(offers)),
             "fallback_count": provider_search.get("fallback_count", 0),

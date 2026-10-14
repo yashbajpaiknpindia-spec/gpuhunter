@@ -549,6 +549,7 @@ def state():
             "profiles_enabled": sum(bool(p.get("enabled")) for p in profiles),
             "last_scan_at": settings.get("last_scan_at"),
             "last_scan_summary": settings.get("last_scan_summary", {}),
+            "gpu_affordability_catalog": settings.get("gpu_affordability_catalog", {}) or {},
             "offer_diagnostics": settings.get("last_scan_offer_diagnostics", []) or [],
             "ui_progress": supervisor.current_ui_progress(),
             "automation": supervisor.automation_state(settings=settings),
@@ -659,8 +660,10 @@ def state():
 def scan():
     """Start or attach to a scan without holding an HTTP request open for provider calls."""
     started_at = time.monotonic()
-    app.logger.info("Manual market-scan request received")
     try:
+        # The scanner selects its coin from configured pool settings (PRL by default)
+        # and chooses GPU models/prices automatically from fresh benchmark economics.
+        app.logger.info("Automatic profitability-first market-scan request received")
         started = supervisor.start_scan_async()
         progress = supervisor.current_ui_progress()
         app.logger.info("Manual market-scan request acknowledged (started=%s, elapsed_ms=%d)", started, int((time.monotonic() - started_at) * 1000))

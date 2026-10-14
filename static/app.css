@@ -118,3 +118,15 @@
 @media(max-width:760px){.scan-diagnostics{padding:12px}.scan-diagnostics-head{align-items:flex-start}.scan-diagnostics-copy>b{font-size:11px}.scan-live-percent{padding-top:4px}.scan-diagnostics-reason{margin-left:0}.diagnostics-heading{align-items:flex-start;flex-direction:column;gap:8px}}
 
 .setup-gaps{border:1px solid #f1dfac;background:#fff8e8;color:#6f5110;border-radius:12px;padding:14px 16px;margin:0 0 18px;font-size:12px;line-height:1.55}.setup-gaps b.setup-title{display:block;font-size:13px;margin-bottom:6px}.setup-gaps ul{margin:6px 0 0;padding-left:18px}.setup-gaps li{margin:4px 0;overflow-wrap:anywhere}.setup-gaps code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:5px;font-size:11px}.setup-gaps details{margin-top:8px}.setup-gaps summary{cursor:pointer;font-weight:700}.setup-gaps .gap-required{color:#972c37;font-weight:700}
+
+
+
+/* v0.7.14: automatic profit-first search status and affordability catalogue. */
+.smart-scan-panel{margin:0 0 18px;padding:16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:var(--shadow)}
+.smart-scan-panel .panel-head{align-items:flex-start;margin-bottom:0}
+.smart-scan-panel .panel-head h3{font-size:15px;margin:4px 0}
+.smart-scan-panel .panel-head p{font-size:11px;line-height:1.6;max-width:850px}
+.smart-scan-status{margin-top:12px;padding:10px 12px;border-radius:8px;background:#f5f7fb;color:var(--muted);font-size:11px;line-height:1.6}
+.affordability-wrap{margin-bottom:20px}
+.affordability-wrap table{min-width:800px}
+@media(max-width:650px){.smart-scan-panel{padding:12px}}
