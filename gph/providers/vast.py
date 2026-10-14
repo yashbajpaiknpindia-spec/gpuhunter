@@ -261,7 +261,7 @@ class VastClient:
         order: str | None = None,
         max_total_hourly_usd: float = 0.0,
     ) -> dict[str, Any]:
-        """Run the strict candidate query and, when allowed, a small broad audit query.
+        """Run a strict low-cost query and a quota-paced broad marketplace audit.
 
         Vast bills searches by *rows returned* against a daily quota, so every row requested
         here has a cost. The strict query finds offers that meet provider-side live filters
@@ -349,9 +349,9 @@ class VastClient:
             audit_skip_reason = "the preferred query failed, so a second query would likely fail too"
             include_audit = False
         if include_audit:
-            # A broad query keeps low-reliability / unverified / multi-GPU offers visible with local
-            # rejection reasons, so one valid strict offer cannot mask them. It is capped separately
-            # (and skippable) because it is the least valuable use of the daily row quota.
+            # A broad query is the discovery net: it exposes cheaper/unusual GPU models and offers
+            # filtered by the strict server-side predicates. The hourly audit interval and shared
+            # daily row budget limit quota use; all offers are rechecked locally before any rental.
             report("Auditing broader Vast market", 16, f"Checking up to {safe_audit_limit} wider on-demand offers to explain filtered or uncertain offers")
             audit_ran = True
             fallback_query = {"num_gpus": {"gte": 1}, "type": "ondemand", "limit": safe_audit_limit}
