@@ -497,7 +497,7 @@ class OpportunityScanner:
                     "disk_hourly_usd": round(disk_rate, 6),
                     "reliability": round(reliability, 5),
                     "verified": verified_status if verified_status is not None else (True if str(offer.get("_gph_search_stage") or "") in {"strict", "targeted"} else False),
-                    "rentable": rentable_status if rentable_status is not None else (True if str(offer.get("_gph_search_stage") or "") == "strict" else False),
+                    "rentable": rentable_status if rentable_status is not None else (True if str(offer.get("_gph_search_stage") or "") in {"strict", "targeted"} else False),
                     "offer_safety_passed": not safety_reasons,
                     "search_stage": str(offer.get("_gph_search_stage") or provider_search.get("query_stage") or "unknown"),
                     "host_id": offer.get("host_id"),
