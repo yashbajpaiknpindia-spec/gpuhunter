@@ -442,7 +442,7 @@ def _dashboard_bundle() -> dict[str, Any]:
         # Cold cache: wait for an in-flight read, but only briefly. An unbounded wait let
         # every dashboard poll pile up behind a dead database until all gunicorn threads
         # were stuck, so even the login page and health checks stopped answering.
-        if not _BUNDLE_READ_LOCK.acquire(timeout=12):
+        if not _BUNDLE_READ_LOCK.acquire(timeout=2.5):
             # The original reader may have completed while this request was waiting.
             # Re-check the shared cache before returning a cold-start 503; another
             # browser tab may have populated it just as the wait expired.
@@ -450,7 +450,7 @@ def _dashboard_bundle() -> dict[str, Any]:
                 cached_after_wait = _BUNDLE_CACHE["bundle"]
             if cached_after_wait is not None:
                 return cached_after_wait
-            raise RuntimeError("Dashboard database read is still in progress; try again shortly")
+            raise RuntimeError("Dashboard snapshot refresh is still running; retry shortly")
     elif not _BUNDLE_READ_LOCK.acquire(blocking=False):
         return cached  # another request is already refreshing; do not queue behind it
     try:
