@@ -34,11 +34,12 @@ class _PostgresConnection:
                 self.execute(statement)
 
     def executemany(self, sql: str, params_seq: Iterable[Iterable[Any]]):
-        # Use psycopg's batched execution for repeated writes. With the app and
+        # Use psycopg's cursor.executemany for batched writes. With the app and
         # database in different Render regions, one execute() per row adds a full
         # network round trip per opportunity and can hold a transaction open for
         # tens of seconds while the dashboard waits for fresh data.
-        return self._conn.executemany(sql.replace("?", "%s"), params_seq)
+        with self._conn.cursor() as cursor:
+            return cursor.executemany(sql.replace("?", "%s"), params_seq)
 
     def commit(self) -> None:
         self._conn.commit()
