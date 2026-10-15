@@ -459,6 +459,9 @@ class Supervisor:
         return max(0, min(configured, 25))
 
     def auto_rent_is_enabled(self, settings: dict[str, Any] | None = None) -> bool:
+        # MONITOR_ONLY is a hard server-side guard, not just a disabled UI control.
+        if self.config.monitor_only:
+            return False
         value = (settings or {}).get("auto_rent_enabled", self.config.auto_rent_enabled) if settings is not None else self.db.get_setting("auto_rent_enabled", self.config.auto_rent_enabled)
         return bool(value)
 
@@ -1130,6 +1133,17 @@ class Supervisor:
         managed = self.db.get_managed_instance(instance_id) or {"instance_id": instance_id}
         if str(managed.get("status") or "").lower() == "destroyed":
             return True
+        if self.config.monitor_only:
+            # Monitoring may identify an unprofitable or unhealthy instance, but this
+            # application must never send a paid-resource DELETE request in monitor mode.
+            meta = self._metadata_dict(managed)
+            if meta.get("monitor_only_last_suppressed_destroy_reason") != reason:
+                meta["monitor_only_last_suppressed_destroy_reason"] = reason
+                managed["metadata_json"] = meta
+                managed["last_monitor_at"] = now_iso()
+                self.db.upsert_managed_instance(managed)
+                self.db.log("INFO", "monitor_only_destroy_suppressed", {"instance_id": instance_id, "reason": reason})
+            return False
         meta = self._metadata_dict(managed)
         now = datetime.now(timezone.utc)
         retry_seconds = max(30, min(int(self.config.monitor_interval_seconds), 60))
