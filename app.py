@@ -691,6 +691,8 @@ def refresh_fx():
 @app.post("/api/automation-settings")
 def automation_settings():
     data = request.get_json(silent=True) or {}
+    if config.monitor_only and bool(data.get("auto_rent_enabled", False)):
+        return jsonify({"ok": False, "error": "Monitor-only mode is enabled; rental automation cannot be enabled."}), 403
     try:
         target = int(data.get("target_active_instances", supervisor.target_instances()))
     except (ValueError, TypeError):
@@ -717,6 +719,8 @@ def automation_settings():
 
 @app.post("/api/deploy-target")
 def deploy_target():
+    if config.monitor_only:
+        return jsonify({"ok": False, "error": "Monitor-only mode: GPU Hunter cannot rent or create instances."}), 403
     supervisor.set_ui_progress("Deploy target", "Checking deployment permission", 5, "Checking auto-deploy setting and live safety blockers")
     if not supervisor.auto_rent_is_enabled():
         message = "Auto-deploy is not enabled. Save the target and enable auto-deploy only after completing all live setup gates."
@@ -772,6 +776,8 @@ def kryptex_status():
 
 @app.post("/api/rent")
 def rent():
+    if config.monitor_only:
+        return jsonify({"ok": False, "error": "Monitor-only mode: GPU Hunter cannot rent instances."}), 403
     data = request.get_json(silent=True) or {}
     opportunity_id = str(data.get("opportunity_id", "")).strip()
     if not opportunity_id:
@@ -789,6 +795,8 @@ def rent():
 
 @app.post("/api/destroy/<int:instance_id>")
 def destroy(instance_id: int):
+    if config.monitor_only:
+        return jsonify({"ok": False, "error": "Monitor-only mode: GPU Hunter cannot destroy instances. Manage rentals directly in Vast.ai."}), 403
     data = request.get_json(silent=True) or {}
     if data.get("confirm") is not True:
         return jsonify({"ok": False, "error": "Explicit confirmation is required"}), 400
@@ -812,6 +820,10 @@ def destroy(instance_id: int):
 
 @app.post("/api/monitor")
 def monitor():
+    if config.monitor_only:
+        if not config.vast_api_key:
+            return jsonify({"ok": False, "error": "VAST_API_KEY is not configured; only pool telemetry can be monitored."}), 400
+        return jsonify({"ok": True, "monitor_only": True, **supervisor.monitor_once()})
     if not (config.automation_mode == "live" and config.enable_live_mining):
         return jsonify({"ok": False, "error": "Live monitoring is off. Enable live monitoring only after completing setup and risk checks."}), 400
     return jsonify({"ok": True, **supervisor.monitor_once()})
