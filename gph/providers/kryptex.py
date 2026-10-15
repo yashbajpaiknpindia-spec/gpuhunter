@@ -203,6 +203,69 @@ class KryptexPoolClient:
                 seen.add(key); unique.append(row)
         return unique[:40]
 
+    def public_gpu_benchmark(self, gpu_name: str) -> dict[str, Any]:
+        """Read the public Kryptex GPU page without a key; never depend on Vast search.
+
+        The page's displayed daily-profit figure is a benchmark reference, not a promise
+        of payout. It is used only for the read-only affordability estimate, never to
+        authorize a rental.
+        """
+        slug = self.gpu_slug(gpu_name)
+        if slug.startswith(("amd-", "radeon-")):
+            family = "amd"
+        else:
+            family = "nvidia"
+        url = f"{self.BASE}/en/device/gpu/{family}/{quote(slug, safe='')}"
+        try:
+            response = self._session().get(url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            return {"gpu_name": gpu_name, "available": False, "error": f"network:{exc.__class__.__name__}"}
+        if response.status_code != 200:
+            return {"gpu_name": gpu_name, "available": False, "error": f"http_{response.status_code}"}
+        import html
+        page = html.unescape(response.text or "")
+        text = re.sub(r"<[^>]+>", " ", page)
+        text = re.sub(r"\\s+", " ", text).replace("\\xa0", " ")
+        if not re.search(r"most profitable coin to mine on this GPU is PRL", text, re.I):
+            return {"gpu_name": gpu_name, "available": False, "error": "PRL_not_top_benchmark"}
+        def number(pattern: str) -> float | None:
+            match = re.search(pattern, text, re.I)
+            if not match:
+                return None
+            try:
+                return float(match.group(1).replace(",", ""))
+            except (TypeError, ValueError):
+                return None
+        daily = number(r"Daily profit:\\s*\\$\\s*([0-9,]+(?:\\.[0-9]+)?)")
+        hashrate_match = re.search(r"Hashrate:\\s*([0-9,.]+)\\s*(TH/s|GH/s|MH/s|KH/s|H/s)", text, re.I)
+        power = number(r"Power:\\s*([0-9,.]+)\\s*W")
+        updated = re.search(r"Last updated:\\s*(\\d{2}/\\d{2}/\\d{4})", text, re.I)
+        if daily is None or daily <= 0 or not hashrate_match:
+            return {"gpu_name": gpu_name, "available": False, "error": "daily_PRL_benchmark_missing"}
+        hashrate = float(hashrate_match.group(1).replace(",", ""))
+        unit = hashrate_match.group(2)
+        # Preserve the displayed value and unit. No conversion is needed for the
+        # daily earnings calculation; it is only context for comparing model speed.
+        return {
+            "gpu_name": gpu_name,
+            "slug": slug,
+            "available": True,
+            "reference_updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "page_updated": updated.group(1) if updated else None,
+            "source_url": url,
+            "source": "Kryptex public GPU page",
+            "coin_rows": [{
+                "coin": "PRL",
+                "algorithm": "PearlHash",
+                "hashrate": hashrate,
+                "hashrate_display": f"{hashrate:g} {unit}",
+                "power_w": power,
+                "daily_profit_usd": daily,
+                "daily_revenue_usd": None,
+                "daily_profit_is_page_estimate": True,
+            }],
+        }
+
     def gpu_profitability(self, gpu_name: str) -> dict[str, Any]:
         """Fetch Kryptex's per-GPU benchmark endpoint when that model is indexed there."""
         candidates = self._gpu_slug_candidates(gpu_name)
