@@ -127,7 +127,7 @@ class Config:
             "kryptex_configured": bool(self.kryptex_mining_username and self.kryptex_coin),
             "kryptex_coin": self.kryptex_coin,
             "kryptex_worker_configured": bool(self.kryptex_worker),
-            "kryptex_gpu_scan_interval_seconds": max(60, self.kryptex_gpu_scan_interval_seconds),
+            "kryptex_gpu_scan_interval_seconds": max(300, self.kryptex_gpu_scan_interval_seconds),
             "kryptex_gpu_reference_enabled": self.kryptex_gpu_reference_enabled,
             "ssh_key_configured": bool(self.ssh_private_key_path and Path(self.ssh_private_key_path).expanduser().exists()),
             "automation_mode": self.automation_mode,
