@@ -383,7 +383,7 @@ class OpportunityScanner:
             # step so the last good opportunity snapshot is kept instead of being wiped.
             detail = provider_search.get("strict_error") or provider_search.get("fallback_error")
             raise RuntimeError(f"Vast offer search failed, so the previous results were kept: {detail}")
-        progress("Preparing offer-level profitability", 25, f"Loaded {len(gpus)} GPU benchmarks and {len(coins)} coin records; rechecking Vast offers against fresh {selected_coin} economics")
+        progress("Preparing offer-level profitability", 25, f"Loaded {len(gpus)} GPU benchmarks and {len(coins)} coin records; benchmarking all returned coin/algorithm pairs (targeted GPU discovery uses {selected_coin})")
 
         # Optional independent Kryptex cross-check. Only use values whose field is explicitly
         # labelled as daily revenue, and only while the Kryptex snapshot is fresh. Its GPU pages
@@ -521,8 +521,9 @@ class OpportunityScanner:
                 coin_tag = _tag(row.get("tag") or row.get("symbol"))
                 if not coin_tag:
                     continue
-                if selected_coin and coin_tag.upper() != selected_coin and str(row.get("name") or "").strip().upper() != selected_coin:
-                    continue
+                # The Kryptex coin selects the pool-account telemetry and targeted discovery
+                # ceiling, but the monitor table must retain every coin/algorithm row returned
+                # by the documented WhatToMine calculator for these scanned GPU offers.
                 coin_ref = coin_map.get(coin_tag)
                 coin_name = str(row.get("name") or (coin_ref or {}).get("name") or coin_tag)
                 algorithm = str(row.get("algorithm") or (coin_ref or {}).get("algorithm") or "")
