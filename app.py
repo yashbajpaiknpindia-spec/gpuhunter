@@ -892,5 +892,5 @@ if __name__ == "__main__":
     if config.auto_scan_enabled or (config.automation_mode == "live" and config.enable_live_mining):
         supervisor.start()
     print(f"GPU Profit Hunter starting at http://{host}:{config.app_port}")
-    print("Live spending is disabled by default. Read README.md before enabling it.")
+    print("MONITOR ONLY: GPU rental and destruction actions are blocked; this app only reads and reports telemetry.")
     app.run(host=host, port=config.app_port, debug=False, threaded=True)
