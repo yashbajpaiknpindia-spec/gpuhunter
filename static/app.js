@@ -148,16 +148,57 @@ function renderOfferDiagnostics(){
 }
 function renderAffordabilityCatalogue(catalog, kryptex){
   const table=$('affordabilityTable'); if(!table)return;
-  const models=Array.isArray(catalog?.models)?catalog.models:[];
-  const poolCoin=String(kryptex?.coin||'').toUpperCase();
-  const poolPrice=Number(kryptex?.coin_price_sample);
-  const poolUpdated=Date.parse(kryptex?.updated_at||'');
-  const poolAgeMs=Number.isFinite(poolUpdated)?Date.now()-poolUpdated:Infinity;
-  const poolMaxAgeMs=Math.max(180000,Number(appState?.config?.kryptex_poll_interval_seconds||60)*3000);
-  const poolPriceFresh=Boolean(kryptex?.coin_price_available&&poolCoin===String(catalog?.coin_tag||'PRL').toUpperCase()&&Number.isFinite(poolPrice)&&poolPrice>0&&poolAgeMs>=-60000&&poolAgeMs<=poolMaxAgeMs);
-  const poolPriceCell=poolPriceFresh?`${currency(poolPrice,8)} <div class="sub-cell">${esc(kryptex.updated_at||'timestamp unavailable')} · reference only</div>`:'Unavailable / stale';
-  if(!models.length){table.innerHTML='<tr><td colspan="6" class="empty-cell">No fresh positive-affordability models. If WhatToMine has no current PRL benchmark, GPU Hunter will not invent revenue or rent a GPU.</td></tr>';return;}
-  table.innerHTML=models.map(m=>`<tr><td><div class="gpu-cell">${esc(m.gpu_name||'Unknown GPU')}</div></td><td>${esc(m.coin_tag||'—')}</td><td><div class="money">${Number(m.max_total_hourly_usd||0)>0?currency(m.max_total_hourly_usd,4)+'/h':'Not affordable under current gates'}</div></td><td><div class="money ${Number(m.best_expected_net_day_usd||0)>=0?'positive':'negative'}">${currency(m.best_expected_net_day_usd)}</div></td><td>${poolPriceCell}</td><td>${esc(m.source_updated_at||catalog.updated_at||'timestamp unavailable')}<div class="sub-cell">${esc(m.source||catalog.source||'Benchmark source')}</div></td></tr>`).join('');
+  let models=Array.isArray(catalog?.models)?catalog.models:[];
+  let usingKryptexFallback=false;
+  // Independent fallback: the public Kryptex model pages keep estimates available when
+  // Vast offer search or WhatToMine scanning is failing. These are not live rental quotes.
+  if(!models.length){
+    const refs=Array.isArray(kryptex?.models)?kryptex.models:[];
+    const haircut=Math.max(0,Math.min(.95,Number(appState?.config?.revenue_haircut_pct??30)/100));
+    const reserve=Math.max(0,Number(appState?.config?.bandwidth_reserve_usd_day||0));
+    const minNet=Math.max(0,Number(appState?.config?.min_net_profit_usd_day||0));
+    const ratio=Math.max(1,Number(appState?.config?.min_revenue_cost_ratio||1.5));
+    const gpuCap=Number(appState?.config?.max_gpu_hourly_usd||0);
+    const totalCap=Number(appState?.config?.max_total_hourly_usd||0);
+    models=refs.filter(m=>m?.available).flatMap(m=>{
+      const row=(m.coin_rows||[]).find(r=>String(r.coin||'').toUpperCase()==='PRL'&&Number(r.daily_profit_usd)>0);
+      if(!row)return [];
+      const benchmark=Number(row.daily_profit_usd);
+      const conservative=benchmark*(1-haircut);
+      const ceilings=[(conservative-reserve-minNet)/24,((conservative/ratio)-reserve)/24];
+      if(gpuCap>0)ceilings.push(gpuCap);
+      if(totalCap>0)ceilings.push(totalCap);
+      const ceiling=Math.max(0,Math.min(...ceilings));
+      const exampleRent=ceiling*.5;
+      return [{
+        gpu_name:m.gpu_name,coin_tag:'PRL',gross_day_usd:benchmark,
+        conservative_gross_day_usd:conservative,
+        max_total_hourly_usd:ceiling,
+        example_rent_hourly_usd:exampleRent,
+        best_expected_net_day_usd:conservative-exampleRent*24-reserve,
+        source_updated_at:m.page_updated||m.reference_updated_at||kryptex.updated_at,
+        source:'Kryptex public GPU page · rent illustrative, not a live Vast quote',
+        benchmark_hashrate:row.hashrate_display||row.hashrate,
+        benchmark_power_w:row.power_w
+      }];
+    }).sort((a,b)=>b.best_expected_net_day_usd-a.best_expected_net_day_usd);
+    usingKryptexFallback=models.length>0;
+  }
+  const poolCoin=String(kryptex?.coin||'PRL').toUpperCase();
+  if(!models.length){
+    table.innerHTML='<tr><td colspan="6" class="empty-cell">No Kryptex daily benchmark is available yet. Vast rental scanning is independent; this table will populate when the public Kryptex model pages return a supported PRL daily figure.</td></tr>';
+    return;
+  }
+  table.innerHTML=models.map(m=>{
+    const gross=Number(m.gross_day_usd??m.conservative_gross_day_usd??0);
+    const maxRent=Number(m.max_total_hourly_usd||0);
+    const exampleRent=Number(m.example_rent_hourly_usd??(maxRent*.5));
+    const net=Number(m.best_expected_net_day_usd||0);
+    const benchmarkInfo=m.benchmark_hashrate?'<div class="sub-cell">'+esc(String(m.benchmark_hashrate))+(m.benchmark_power_w?' · '+esc(String(m.benchmark_power_w))+' W':'')+'</div>':'';
+    const sourceTime=m.source_updated_at||catalog?.updated_at||kryptex?.updated_at||'timestamp unavailable';
+    const rentLabel=usingKryptexFallback?'Illustrative rent '+currency(exampleRent,4)+'/h':'Max affordable '+currency(maxRent,4)+'/h';
+    return '<tr><td><div class="gpu-cell">'+esc(m.gpu_name||'Unknown GPU')+'</div>'+benchmarkInfo+'</td><td>'+esc(m.coin_tag||poolCoin)+'</td><td><div class="money">'+currency(gross)+'</div><div class="sub-cell">Kryptex daily benchmark, before Vast rent</div></td><td><div class="money">'+(maxRent>0?currency(maxRent,4)+'/h':'Not affordable at current gates')+'</div></td><td><div class="money '+(net>=0?'positive':'negative')+'">'+currency(net)+'</div><div class="sub-cell">'+rentLabel+' · conservative haircut applied</div></td><td>'+esc(sourceTime)+'<div class="sub-cell">'+esc(m.source||catalog?.source||'Benchmark source')+'</div></td></tr>';
+  }).join('');
 }
 function renderOpportunities(){
   if(!appState) return;
@@ -171,7 +212,8 @@ function renderOpportunities(){
   });
   renderAffordabilityCatalogue(appState.gpu_affordability_catalog||{}, appState.kryptex||{});
   const cat=appState.gpu_affordability_catalog||{}; const modelCount=Array.isArray(cat.models)?cat.models.length:0;
-  const status=$('smartScanStatus'); if(status)status.textContent=modelCount? `Auto-estimated ${modelCount} GPU models for ${cat.coin_tag||'PRL'} from ${cat.source||'provider benchmarks'} (updated ${cat.updated_at||'timestamp unavailable'}). Targeted Vast searches use only positive affordability ceilings; offers are revalidated before any paid action.` : 'No fresh positive-affordability catalogue yet. The first scan must load current WhatToMine GPU/coin data; if PRL has no supported calculation, the system will report that instead of guessing revenue.';
+  const kryptexRefCount=Array.isArray(appState.kryptex_gpu_market?.models)?appState.kryptex_gpu_market.models.filter(m=>m?.available&&(m.coin_rows||[]).some(r=>String(r.coin||'').toUpperCase()==='PRL'&&Number(r.daily_profit_usd)>0)).length:0;
+  const status=$('smartScanStatus'); if(status)status.textContent=modelCount? `Auto-estimated ${modelCount} GPU models for ${cat.coin_tag||'PRL'} from ${cat.source||'provider benchmarks'} (updated ${cat.updated_at||'timestamp unavailable'}). Live Vast rates appear only when the Vast API responds.` : kryptexRefCount? `Vast scan is unavailable or has no fresh rows. Showing ${kryptexRefCount} independent Kryptex PRL model estimates; example rent is 50% of the maximum affordable rate after a conservative haircut. These are not live Vast quotes.` : 'Waiting for public Kryptex GPU benchmark pages. The fallback does not require a Vast API scan and never invents a live rental rate.';
   let empty='No coin-level rows match these filters. Offer-level audit below still shows every returned Vast offer and its reason for exclusion.';
   if(!rows.length){
     const summary=appState.last_scan_summary||{};
