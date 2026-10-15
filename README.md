@@ -1,6 +1,12 @@
 # GPU Profit Hunter
 
-**Version:** 0.7.9 · **Run mode by default:** scanner only · **Live spending by default:** disabled
+## Monitor-only mode (default)
+
+The dashboard is a **read-only monitor by default** (`MONITOR_ONLY=true`). It refreshes Vast.ai offer/rental-rate data on the quota-safe scan schedule (60 seconds by default, automatically paced if the Vast row quota requires it), refreshes Kryptex worker/account telemetry about every 60 seconds, and refreshes the browser dashboard every 30 seconds. Add the Kryptex Pool username/wallet and the exact worker label in the **Kryptex Pool connection** panel. The coin/algorithm table compares current offer rent, estimated gross earnings/day, conservative net/day after modeled fees and rent, data freshness, and pool telemetry where available. Estimates are not guaranteed payouts.
+
+While monitor-only is active, server-side guards block manual/automatic rent, deployment, and destroy requests. Existing instances can still be observed; this app will not terminate them. Use Vast.ai directly for instance actions. The dashboard updates in-app; it does not send external push notifications unless a separate notification channel is configured.
+
+**Version:** 0.7.16-monitor · **Run mode by default:** monitor-only · **Live spending by default:** disabled
 
 ## Profit-first scan and source freshness update
 
@@ -21,7 +27,7 @@ GPU Profit Hunter is a local dashboard and conservative automation framework for
 ## Login, UI and INR display updates (v0.7.2)
 
 - The dashboard uses an in-app sign-in page instead of the opaque browser Basic Auth prompt. It shows the exact configured username, has a show/hide password control, gives a useful error after rejected credentials, and explains where to check `APP_USER` / `APP_PASSWORD` in Render. Sessions use HttpOnly, SameSite=Lax cookies that are Secure on Render; they expire after 12 hours. Ten failed attempts from an address within 15 minutes trigger a temporary 15-minute wait.
-- The app remains scanner-only by default. The redesign does not silently enable paid rentals.
+- The app remains monitor-only by default. The redesign does not silently enable paid rentals or destruction.
 - USD remains the accounting currency. The dashboard converts monetary estimates to INR using the timestamped USD/INR reference supplied by ExchangeRate-API; it caches the daily quote and hides INR conversions if the quote is unavailable or stale. This conversion does not feed back into profit gates, costs, or auto-rent decisions.
 - Instance monitoring now labels the model's conservative gross forecast separately from the pool connector's current 24-hour revenue run-rate. They are different measures and should not be read as realized payout. The top KPI is explicitly the **best candidate's estimated net/day**, not total portfolio net.
 
@@ -337,9 +343,9 @@ The manual Scan Market action uses the configured Kryptex coin (defaults to PRL/
 The Overview shows the automatic GPU affordability catalogue and, when fresh and matching the configured coin, the Kryptex public pool coin-price sample as a separate reference (not GPU revenue). The dashboard does not accept manual GPU/price search filters. Live auto-rental remains blocked until the explicit Vast mining-credit eligibility, payment-source, wallet, miner-profile, SSH monitoring, and pool telemetry gates pass; setting the search strategy does not bypass those checks.
 
 
-## Scan-to-rent automation (v0.7.15)
+## Scan-to-rent automation (legacy; blocked by monitor-only mode)
 
 - When a user starts **Scan Market**, the UI now waits through both the market scan and follow-on rental evaluation whenever live mode and auto-rent are enabled. The same qualified-candidate evaluator is used as in recurring scans.
-- Auto-rent is enabled by default for the requested autonomous workflow, but it does **not** bypass live-mode, eligible-credit, wallet, enabled miner profile, SSH, fresh pool-revenue telemetry, current offer revalidation, available balance, daily spend, positive-net-profit, or revenue/cost-ratio gates. If any gate is missing, no paid rental is submitted and the UI reports the blocker.
+- The legacy auto-rent evaluator remains in the codebase, but `MONITOR_ONLY=true` disables it at the server and supervisor layers. Setting UI controls cannot bypass this lock. Do not set `MONITOR_ONLY=false` unless you deliberately intend to restore paid-resource actions and have reviewed all provider eligibility and safety requirements.
 - If no fresh supported Pearl/GPU revenue benchmark passes conservative fees, reserves, and net-profit gates, the result is scan-only; a coin-price reference alone is never mining revenue.
 - Existing instance monitoring continues to compare conservative pool/benchmark revenue against current all-in rent and destroy managed instances when profitability or monitoring safety gates fail.
