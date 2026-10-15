@@ -698,7 +698,7 @@ class Supervisor:
                 except Exception:
                     pass
             return disabled
-        interval = max(60, int(self.config.kryptex_gpu_scan_interval_seconds))
+        interval = max(300, int(self.config.kryptex_gpu_scan_interval_seconds))
         current = time.monotonic()
         cached = self.db.get_setting("kryptex_gpu_market", {}) or {}
         if not force and cached and current - self._last_kryptex_gpu_poll < interval:
