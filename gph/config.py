@@ -98,8 +98,8 @@ class Config:
     auto_scan_enabled: bool = _bool("AUTO_SCAN_ENABLED", True)
     # Requested autonomous preference defaults on, but live mode and every spend/profitability gate remain mandatory.
     auto_rent_enabled: bool = _bool("AUTO_RENT_ENABLED", True)
-    # Read-only dashboard mode: no rent/create/delete actions unless explicitly disabled by operator.
-    monitor_only: bool = _bool("MONITOR_ONLY", True)
+    # Hard read-only mode for this deployment: paid resource actions are not configurable from the UI or environment.
+    monitor_only: bool = True
     # Vast rental opportunities refresh every 60 seconds by default. Provider revenue
     # feeds retain their own quota-aware caches, so this does not spam WhatToMine.
     scan_interval_seconds: int = _int("SCAN_INTERVAL_SECONDS", 60)
