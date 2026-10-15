@@ -225,7 +225,7 @@ class KryptexPoolClient:
         import html
         page = html.unescape(response.text or "")
         text = re.sub(r"<[^>]+>", " ", page)
-        text = re.sub(r"\\s+", " ", text).replace("\\xa0", " ")
+        text = re.sub(r"\s+", " ", text).replace("\xa0", " ")
         if not re.search(r"most profitable coin to mine on this GPU is PRL", text, re.I):
             return {"gpu_name": gpu_name, "available": False, "error": "PRL_not_top_benchmark"}
         def number(pattern: str) -> float | None:
@@ -236,10 +236,10 @@ class KryptexPoolClient:
                 return float(match.group(1).replace(",", ""))
             except (TypeError, ValueError):
                 return None
-        daily = number(r"Daily profit:\\s*\\$\\s*([0-9,]+(?:\\.[0-9]+)?)")
-        hashrate_match = re.search(r"Hashrate:\\s*([0-9,.]+)\\s*(TH/s|GH/s|MH/s|KH/s|H/s)", text, re.I)
-        power = number(r"Power:\\s*([0-9,.]+)\\s*W")
-        updated = re.search(r"Last updated:\\s*(\\d{2}/\\d{2}/\\d{4})", text, re.I)
+        daily = number(r"Daily profit:\s*\$\s*([0-9,]+(?:\.[0-9]+)?)")
+        hashrate_match = re.search(r"Hashrate:\s*([0-9,.]+)\s*(TH/s|GH/s|MH/s|KH/s|H/s)", text, re.I)
+        power = number(r"Power:\s*([0-9,.]+)\s*W")
+        updated = re.search(r"Last updated:\s*(\d{2}/\d{2}/\d{4})", text, re.I)
         if daily is None or daily <= 0 or not hashrate_match:
             return {"gpu_name": gpu_name, "available": False, "error": "daily_PRL_benchmark_missing"}
         hashrate = float(hashrate_match.group(1).replace(",", ""))
