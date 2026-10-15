@@ -89,8 +89,8 @@ function decision(item){
 }
 function reasonText(item){return (item.reasons||[]).join(' · ');}
 function opportunityRow(item, compact=false){
-  const ratio=Number(item.revenue_cost_ratio||0); const net=Number(item.expected_net_day_usd||0); const canRent=Boolean(item.qualified);
-  const action=canRent?`<button class="btn btn-primary rent-btn" data-id="${esc(item.id)}">Rent</button>`:`<button class="btn btn-secondary" disabled title="${esc(reasonText(item))}">Blocked</button>`;
+  const ratio=Number(item.revenue_cost_ratio||0); const net=Number(item.expected_net_day_usd||0); const monitorOnly=Boolean(appState?.config?.monitor_only); const canRent=Boolean(item.qualified)&&!monitorOnly;
+  const action=monitorOnly?`<span class="sub-cell">Monitor only</span>`:(canRent?`<button class="btn btn-primary rent-btn" data-id="${esc(item.id)}">Rent</button>`:`<button class="btn btn-secondary" disabled title="${esc(reasonText(item))}">Blocked</button>`);
   return `<tr>
     <td><div class="gpu-cell">${esc(item.gpu_name||'Unknown GPU')}</div><div class="sub-cell">Offer #${esc(item.offer_id)} · ${esc(item.region||'region unknown')} · ${number(item.reliability*100,1)}% reliable</div></td>
     <td><span class="coin-chip">${esc(item.coin_tag)}</span><div class="sub-cell">${esc(item.algorithm||'Algorithm unavailable')}</div></td>
@@ -189,7 +189,7 @@ function renderInstances(){
   $('instanceTable').innerHTML=rows.length?rows.map(x=>{
     const managed=x.managed_by_gph;
     const status=(x.status||'unknown').toLowerCase(); const statusPill=['running','active'].includes(status)?pill('pill-good',status.toUpperCase()):pill('pill-warn',status.toUpperCase());
-    const action=managed?`<button class="btn btn-danger destroy-btn" data-id="${Number(x.instance_id)}">Destroy</button>`:`<span class="sub-cell">External / not managed</span>`;
+    const action=appState?.config?.monitor_only?`<span class="sub-cell">Monitoring only</span>`:(managed?`<button class="btn btn-danger destroy-btn" data-id="${Number(x.instance_id)}">Destroy</button>`:`<span class="sub-cell">External / not managed</span>`);
     const hr=Number(x.observed_hashrate_hs||0); const hrText=hr>=1e12?number(hr/1e12,2)+' TH/s':hr>=1e9?number(hr/1e9,2)+' GH/s':hr>0?number(hr,0)+' H/s':'—';
     const poolRate = x.pool_revenue_24h_usd;
     const poolStatus = poolRate!==null && poolRate!==undefined ? 'Pool-reported current 24h run-rate' : (x.pool_metrics_error ? 'Pool telemetry error' : 'Pool run-rate not connected');
@@ -201,13 +201,16 @@ function renderInstances(){
   $('navInstanceCount').textContent=rows.length;
 }
 function renderAutomation(a,blockers,summary={}){
+  const monitorOnly=Boolean(appState?.config?.monitor_only);
   const input=$('targetInstances'); const desired=Number(a.target_active_instances??1); const cap=25;
   input.max=String(cap);
   if(document.activeElement!==input) input.value=String(Math.min(cap,Math.max(0,desired)));
-  $('autoRentEnabled').checked=Boolean(a.auto_rent_enabled); $('autoRentEnabled').disabled=!(a.live_mode&&!blockers.length);
-  $('deployTargetBtn').disabled=!(a.live_mode&&!blockers.length&&a.target_active_instances>0);
-  $('automationModeLabel').className=`pill ${a.auto_rent_enabled?'pill-warn':'pill-muted'}`;
-  $('automationModeLabel').textContent=a.auto_rent_enabled?'AUTO-DEPLOY ON':'SCAN ONLY';
+  $('autoRentEnabled').checked=monitorOnly?false:Boolean(a.auto_rent_enabled); $('autoRentEnabled').disabled=monitorOnly||!(a.live_mode&&!blockers.length);
+  $('deployTargetBtn').disabled=monitorOnly||!(a.live_mode&&!blockers.length&&a.target_active_instances>0);
+  if($('saveAutomationBtn')) $('saveAutomationBtn').disabled=monitorOnly;
+  $('automationModeLabel').className=`pill ${monitorOnly?'pill-good':a.auto_rent_enabled?'pill-warn':'pill-muted'}`;
+  $('automationModeLabel').textContent=monitorOnly?'MONITOR ONLY':a.auto_rent_enabled?'AUTO-DEPLOY ON':'SCAN ONLY';
+  if(monitorOnly){$('automationHelp').textContent='Monitor-only safety lock is active. Market prices, coin economics and worker telemetry update automatically; GPU Hunter cannot rent or destroy instances.'; return;}
   $('automationHelp').textContent=blockers.length?`Auto-deploy blocked: ${blockers.slice(0,3).join(' · ')}${blockers.length>3?' …':''}`:`Target can be set from 0–${cap}. Automatic scans ${a.auto_scan_enabled?'ON':'OFF'} every ~${Math.max(1,Math.round((a.effective_scan_interval_seconds||a.scan_interval_seconds||60)/60))} min (paced to the daily Vast search quota). Qualified candidates are ranked by conservative net/day; spend and safety gates may keep the active count below your target.`;
   updateTargetPreview(a,summary);
 }
