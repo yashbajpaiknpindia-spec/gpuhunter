@@ -856,7 +856,7 @@ def too_large(_error):
 # when scanning/live automation is enabled OR whenever a Vast key exists so previously
 # rented instances remain monitored even if the operator disables new scans. Render is
 # configured with one Gunicorn worker; multiple workers would duplicate these threads.
-if config.auto_scan_enabled or (config.automation_mode == "live" and config.enable_live_mining) or config.vast_api_key:
+if config.auto_scan_enabled or (config.automation_mode == "live" and config.enable_live_mining) or config.vast_api_key or config.kryptex_gpu_reference_enabled:
     supervisor.start()
 
 
@@ -889,7 +889,7 @@ if __name__ == "__main__":
     password = os.getenv("APP_PASSWORD", "")
     if host not in {"127.0.0.1", "localhost", "::1"} and not password:
         raise SystemExit("Refusing to expose the dashboard on a non-local interface without APP_PASSWORD. Set a strong password in .env or bind to 127.0.0.1.")
-    if config.auto_scan_enabled or (config.automation_mode == "live" and config.enable_live_mining):
+    if config.auto_scan_enabled or (config.automation_mode == "live" and config.enable_live_mining) or config.kryptex_gpu_reference_enabled:
         supervisor.start()
     print(f"GPU Profit Hunter starting at http://{host}:{config.app_port}")
     print("MONITOR ONLY: GPU rental and destruction actions are blocked; this app only reads and reports telemetry.")
