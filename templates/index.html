@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GPU Profit Hunter v0.7.15</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.15') }}">
+  <title>GPU Profit Hunter · Monitor Only</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v='0.7.16-monitor') }}">
 </head>
 <body>
   <div class="shell">
@@ -33,6 +33,7 @@
       </header>
 
       <div id="notice" class="notice hidden" role="status" aria-live="polite"></div>
+      <div class="fine-print" role="status" aria-live="polite"><strong>MONITOR ONLY:</strong> live coin/worker telemetry and Vast rental rates are read-only here. GPU Hunter will not rent, deploy, or destroy instances. Market scan runs automatically at the configured quota-safe interval; dashboard values refresh every 30 seconds.</div>
       <div id="setupGaps" class="setup-gaps hidden" role="region" aria-label="Missing API keys and setup"></div>
       <section id="taskPanel" class="task-panel hidden" aria-live="polite" aria-busy="false">
         <div class="task-top"><div class="task-lead"><div class="task-indicator" id="taskIndicator" aria-hidden="true"><span id="taskRingLabel">···</span></div><div><div class="section-kicker">LIVE ACTION STATUS · PROVIDER + PROFITABILITY</div><h2 id="taskTitle">Ready</h2><p id="taskDetail">When you start an action, its current step and result appear here.</p></div></div><span id="taskBadge" class="pill pill-muted">IDLE</span></div>
@@ -71,7 +72,7 @@
           <div class="panel-head"><div><h3>Autonomous Pearl mining search</h3><p>No manual GPU or price filters. GPU Hunter estimates conservative PRL revenue for supported GPU benchmarks, calculates each model's maximum affordable all-in rental rate, then searches Vast for matching offers. It only considers rentals that remain profitable after fees and safety reserves.</p></div><span class="pill pill-muted">PRL FIRST · ANY GPU</span></div>
           <div class="smart-scan-status" id="smartScanStatus">Waiting for fresh WhatToMine GPU and coin benchmarks. Scan Market runs the automatic profitability-first workflow.</div>
         </div>
-        <div class="section-heading diagnostics-heading"><div><div class="section-kicker">PROFITABILITY FIRST</div><h3>GPU affordability catalogue</h3><p>Automatically calculated from fresh benchmark data. Models with no positive affordable rental price are excluded from targeted searches; every returned offer is recalculated before any live action.</p></div></div>
+        <div class="section-heading diagnostics-heading"><div><div class="section-kicker">PROFITABILITY FIRST</div><h3>Coin profitability vs GPU rental rates</h3><p>Fresh benchmark estimates show the maximum affordable all-in rental rate and conservative net/day for each supported GPU/coin pair. The live offer table below separately shows current Vast rates, estimated gross/day and conservative net/day.</p></div></div>
         <div class="table-wrap affordability-wrap"><table class="offer-diagnostic-table"><thead><tr><th>GPU model</th><th>Coin</th><th>Max affordable all-in USD/hour</th><th>Estimated net/day at ceiling</th><th>Kryptex pool coin-price reference</th><th>Benchmark source updated</th></tr></thead><tbody id="affordabilityTable"><tr><td colspan="6" class="empty-cell">Run Scan Market to calculate PRL affordability across supported GPU models.</td></tr></tbody></table></div>
         <div class="finance-row">
           <div class="panel wallet-panel">
@@ -138,13 +139,13 @@
         <div id="scanDiagnostics" class="scan-diagnostics" aria-live="polite"><div class="scan-diagnostics-head"><span class="scan-orb idle"></span><div><b>Market scan status</b><small>Waiting for the latest server state…</small></div></div></div>
         <div class="section-heading diagnostics-heading"><div><div class="section-kicker">OFFER-LEVEL AUDIT</div><h3>Every returned offer and why it passed or failed</h3><p>Includes benchmark mismatches, missing provider fields, reliability failures, and offers with no supported coin calculations.</p></div><span id="offerReviewCount" class="pill pill-muted">0 offers reviewed</span></div>
         <div class="table-wrap offer-diagnostic-wrap"><table class="offer-diagnostic-table"><thead><tr><th>Offer / GPU</th><th>Rent / hr</th><th>Reliability</th><th>Verified / rentable</th><th>Benchmark match</th><th>Best net/day estimate</th><th>Result / explanation</th></tr></thead><tbody id="offerReviewTable"><tr><td colspan="7" class="empty-cell">Offer-level diagnostics appear after a provider query returns offers.</td></tr></tbody></table></div>
-        <div class="section-heading"><div><div class="section-kicker">COIN-LEVEL PROFITABILITY</div><h3>Coin / algorithm calculations</h3><p>Ranked by conservative net after rent and fees.</p></div></div>
+        <div class="section-heading"><div><div class="section-kicker">COIN-LEVEL PROFITABILITY</div><h3>Coin / algorithm profitability monitor</h3><p>Continuously compare current Vast rental cost with estimated mining earnings and conservative net/day. Values are estimates, not guaranteed payouts.</p></div></div>
         <div class="table-wrap scanner-table"><table><thead><tr><th>GPU / offer</th><th>Coin / algorithm</th><th>Rent / hr</th><th>Gross/day</th><th>Conservative net/day</th><th>Rev. / cost</th><th>Reliability</th><th>Data</th><th>Action</th></tr></thead><tbody id="allOpportunities"><tr><td colspan="9" class="empty-cell">Run a scan to load current offers.</td></tr></tbody></table></div>
         <div class="fine-print" id="scannerFoot">Scan data source: not connected.</div>
       </section>
 
       <section id="instancesSection" class="page-section hidden">
-        <div class="section-heading"><div><div class="section-kicker">RENTAL CONTROL</div><h2>Instances & live performance</h2><p>All running Vast instances plus locally retained deployment/destruction history, including auto-stop reasons.</p></div><button class="btn btn-secondary" id="refreshInstancesBtn">↻ Refresh instances</button></div>
+        <div class="section-heading"><div><div class="section-kicker">RENTAL CONTROL</div><h2>Instances & live performance</h2><p>Read-only view of Vast instances, current rental cost, observed hashrate, pool telemetry and estimated net/day. Use Vast.ai directly for any instance actions.</p></div><button class="btn btn-secondary" id="refreshInstancesBtn">↻ Refresh instances</button></div>
         <div class="inline-warning"><span>!</span><div><b>Estimated vs realized earnings:</b> WhatToMine estimates are forecasts; the Kryptex panel separately shows public pool telemetry where available. Balance is not daily income.</div></div>
         <div class="table-wrap"><table><thead><tr><th>Instance</th><th>Status</th><th>Rate</th><th>Observed hashrate</th><th>GPU temp / util</th><th>Accepted evidence</th><th>Conservative gross/day</th><th>Net forecast/day</th><th>Action</th></tr></thead><tbody id="instanceTable"><tr><td colspan="9" class="empty-cell">No instances loaded.</td></tr></tbody></table></div>
       </section>
