@@ -2,6 +2,10 @@
 
 ## Monitor-only mode (default)
 
+## Kryptex fallback estimates
+
+The affordability table uses public Kryptex GPU pages independently of Vast offer scanning. It polls a curated NVIDIA RTX model set every five minutes by default. Where a page reports a daily PRL benchmark, the table calculates a conservative maximum hourly rent and estimated daily net at an illustrative rent equal to half that ceiling. This is not a live Vast quote. Unsupported or missing benchmark figures are omitted rather than guessed. The feature is read-only and cannot create or destroy instances.
+
 The dashboard has a **hard-coded read-only monitor lock** in this release; it is not controlled by an environment variable. It refreshes Vast.ai offer/rental-rate data on the quota-safe scan schedule (60 seconds by default, automatically paced if the Vast row quota requires it), refreshes Kryptex worker/account telemetry about every 60 seconds, and refreshes the browser dashboard every 30 seconds. Add the Kryptex Pool username/wallet and the exact worker label in the **Kryptex Pool connection** panel. The coin/algorithm table compares every coin/algorithm row returned by WhatToMine for the GPU offers actually scanned: current offer rent, estimated gross earnings/day, conservative net/day after modeled fees and rent, data freshness, and pool telemetry where available. Vast offer discovery remains quota-bounded, so this is a live comparison of scanned offers—not a claim that every marketplace listing or every coin is covered. The configured Kryptex coin/worker is the pool-telemetry target; it no longer filters other benchmarked coins out of the comparison table. Estimates are not guaranteed payouts.
 
 While monitor-only is active, server-side guards block manual/automatic rent, deployment, and destroy requests. Existing instances can still be observed; this app will not terminate them. Use Vast.ai directly for instance actions. The dashboard updates in-app; it does not send external push notifications unless a separate notification channel is configured.
