@@ -98,6 +98,8 @@ class Config:
     auto_scan_enabled: bool = _bool("AUTO_SCAN_ENABLED", True)
     # Requested autonomous preference defaults on, but live mode and every spend/profitability gate remain mandatory.
     auto_rent_enabled: bool = _bool("AUTO_RENT_ENABLED", True)
+    # Read-only dashboard mode: no rent/create/delete actions unless explicitly disabled by operator.
+    monitor_only: bool = _bool("MONITOR_ONLY", True)
     # Vast rental opportunities refresh every 60 seconds by default. Provider revenue
     # feeds retain their own quota-aware caches, so this does not spam WhatToMine.
     scan_interval_seconds: int = _int("SCAN_INTERVAL_SECONDS", 60)
@@ -146,6 +148,7 @@ class Config:
             "max_disk_gb": self.max_disk_gb,
             "auto_scan_enabled": self.auto_scan_enabled,
             "auto_rent_enabled_env": self.auto_rent_enabled,
+            "monitor_only": self.monitor_only,
             "scan_interval_seconds": max(60, self.scan_interval_seconds),
             "vast_daily_row_budget": self.vast_daily_row_budget,
             "vast_search_limit": self.vast_search_limit,
