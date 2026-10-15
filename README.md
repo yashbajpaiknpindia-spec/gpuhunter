@@ -2,7 +2,7 @@
 
 ## Monitor-only mode (default)
 
-The dashboard is a **read-only monitor by default** (`MONITOR_ONLY=true`). It refreshes Vast.ai offer/rental-rate data on the quota-safe scan schedule (60 seconds by default, automatically paced if the Vast row quota requires it), refreshes Kryptex worker/account telemetry about every 60 seconds, and refreshes the browser dashboard every 30 seconds. Add the Kryptex Pool username/wallet and the exact worker label in the **Kryptex Pool connection** panel. The coin/algorithm table compares current offer rent, estimated gross earnings/day, conservative net/day after modeled fees and rent, data freshness, and pool telemetry where available. Estimates are not guaranteed payouts.
+The dashboard has a **hard-coded read-only monitor lock** in this release; it is not controlled by an environment variable. It refreshes Vast.ai offer/rental-rate data on the quota-safe scan schedule (60 seconds by default, automatically paced if the Vast row quota requires it), refreshes Kryptex worker/account telemetry about every 60 seconds, and refreshes the browser dashboard every 30 seconds. Add the Kryptex Pool username/wallet and the exact worker label in the **Kryptex Pool connection** panel. The coin/algorithm table compares current offer rent, estimated gross earnings/day, conservative net/day after modeled fees and rent, data freshness, and pool telemetry where available. Estimates are not guaranteed payouts.
 
 While monitor-only is active, server-side guards block manual/automatic rent, deployment, and destroy requests. Existing instances can still be observed; this app will not terminate them. Use Vast.ai directly for instance actions. The dashboard updates in-app; it does not send external push notifications unless a separate notification channel is configured.
 
@@ -346,6 +346,6 @@ The Overview shows the automatic GPU affordability catalogue and, when fresh and
 ## Scan-to-rent automation (legacy; blocked by monitor-only mode)
 
 - When a user starts **Scan Market**, the UI now waits through both the market scan and follow-on rental evaluation whenever live mode and auto-rent are enabled. The same qualified-candidate evaluator is used as in recurring scans.
-- The legacy auto-rent evaluator remains in the codebase, but `MONITOR_ONLY=true` disables it at the server and supervisor layers. Setting UI controls cannot bypass this lock. Do not set `MONITOR_ONLY=false` unless you deliberately intend to restore paid-resource actions and have reviewed all provider eligibility and safety requirements.
+- The legacy auto-rent evaluator remains in the codebase, but the hard-coded monitor-only lock disables it at the server and supervisor layers. Setting UI controls or environment variables cannot bypass this lock. Restoring paid-resource actions would require a deliberate code change and a separate safety review.
 - If no fresh supported Pearl/GPU revenue benchmark passes conservative fees, reserves, and net-profit gates, the result is scan-only; a coin-price reference alone is never mining revenue.
 - Existing instance monitoring continues to compare conservative pool/benchmark revenue against current all-in rent and destroy managed instances when profitability or monitoring safety gates fail.
