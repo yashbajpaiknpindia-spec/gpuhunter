@@ -62,6 +62,7 @@ class Supervisor:
         self._kryptex_gpu_cache_lock = threading.Lock()  # readers never wait for provider I/O
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+        self.kryptex_reference_thread: threading.Thread | None = None
         self.monitor_thread: threading.Thread | None = None
         self._scan_lock = threading.Lock()
         self._last_scan_monotonic = 0.0
@@ -114,6 +115,22 @@ class Supervisor:
             if not self.monitor_thread or not self.monitor_thread.is_alive():
                 self.monitor_thread = threading.Thread(target=self.run_monitor_loop, name="gph-instance-monitor", daemon=True)
                 self.monitor_thread.start()
+        # The Kryptex GPU benchmark catalogue is independent of Vast offer search.
+        # It keeps the offline rent-ceiling estimates populated when Vast returns 429/errors.
+        if self.config.kryptex_gpu_reference_enabled:
+            if not self.kryptex_reference_thread or not self.kryptex_reference_thread.is_alive():
+                self.kryptex_reference_thread = threading.Thread(target=self.run_kryptex_reference_loop, name="gph-kryptex-reference", daemon=True)
+                self.kryptex_reference_thread.start()
+
+    def run_kryptex_reference_loop(self) -> None:
+        """Refresh public per-model Kryptex estimates without requiring a Vast scan."""
+        while not self.stop_event.is_set():
+            try:
+                self.refresh_kryptex_gpu_market(force=True)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Kryptex GPU reference refresh failed: %s", exc.__class__.__name__)
+            self.stop_event.wait(max(300, int(self.config.kryptex_gpu_scan_interval_seconds)))
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -695,6 +712,15 @@ class Supervisor:
             gpu_names: list[str] = []
             seen: set[str] = set()
             source_names = self.db.get_setting("last_gpu_models_seen", []) or []
+            # Curated fallback model set ensures affordability estimates still load before
+            # the first successful Vast scan. These are public benchmark lookups only.
+            source_names = list(source_names) + [
+                "RTX 5090", "RTX 5080", "RTX 5070 Ti", "RTX 5070",
+                "RTX 4090", "RTX 4080 SUPER", "RTX 4080", "RTX 4070 Ti SUPER",
+                "RTX 4070 Ti", "RTX 4070 SUPER", "RTX 4070", "RTX 3090 Ti",
+                "RTX 3090", "RTX 3080 Ti", "RTX 3080", "RTX 3070 Ti",
+                "RTX 3070", "RTX 3060 Ti", "RTX 3060",
+            ]
             for name_value in list(source_names) + [x.get("gpu_name") for x in opportunities]:
                 name = str(name_value or "").strip()
                 key = name.casefold()
@@ -708,7 +734,7 @@ class Supervisor:
                 # Bound concurrency and API fan-out; each model's successful/missing response is
                 # locally cached by KryptexPoolClient for the configured short reference-cache interval.
                 with ThreadPoolExecutor(max_workers=6) as pool:
-                    future_map = {pool.submit(self.kryptex.gpu_profitability, name): name for name in gpu_names}
+                    future_map = {pool.submit(self.kryptex.public_gpu_benchmark, name): name for name in gpu_names}
                     for future in as_completed(future_map):
                         name = future_map[future]
                         try:
@@ -743,7 +769,7 @@ class Supervisor:
                         fluctuations.append({"gpu_name": model.get("gpu_name"), "coin": coinrow.get("coin"), "algorithm": coinrow.get("algorithm"), "changes": changes})
             snapshot = {
                 "enabled": True,
-                "source": "Kryptex public GPU benchmark endpoint (operator-enabled)",
+                "source": "Kryptex public GPU pages (read-only benchmark)",
                 "updated_at": now_iso(),
                 "poll_interval_seconds": interval,
                 "attempted_models": len(gpu_names),
@@ -751,7 +777,7 @@ class Supervisor:
                 "missing_models": sum(1 for x in models if not x.get("available")),
                 "models": models,
                 "errors": errors[:20],
-                "note": "Kryptex GPU references are supplementary. Daily revenue/profit is shown only when the API explicitly labels a daily field; unlabelled or annual figures are not treated as daily income.",
+                "note": "Public Kryptex daily-profit estimates are a reference before rent, not guaranteed pool payouts. They are used for a conservative illustrative rent ceiling only; no live Vast price is inferred and no rental action is enabled.",
             }
             with self._kryptex_gpu_cache_lock:
                 self._kryptex_gpu_market_cache = dict(snapshot)
