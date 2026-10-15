@@ -71,7 +71,7 @@ class Config:
     kryptex_gpu_scan_interval_seconds: int = _int("KRYPTEX_GPU_SCAN_INTERVAL_SECONDS", 300)
     # The Kryptex per-GPU route used by older versions is not listed in its public Pool API docs.
     # Keep it out of rental economics unless the operator has independently verified the endpoint.
-    kryptex_gpu_reference_enabled: bool = _bool("KRYPTEX_GPU_REFERENCE_ENABLED", True)
+    kryptex_gpu_reference_enabled: bool = True  # read-only estimates are required even when Vast search is unavailable
     vast_api_base: str = _vast_base()
     automation_mode: str = os.getenv("AUTOMATION_MODE", "scan").strip().lower()
     enable_live_mining: bool = _bool("ENABLE_LIVE_MINING", False)
